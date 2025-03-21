@@ -47,11 +47,8 @@ var (
 )
 
 func init() {
-	defaultLogger.Store(New(os.Stderr).With(DefaultFields...))
+	SetDefault(New(os.Stderr).With(DefaultFields...))
 }
-
-// Default returns the default [Logger].
-func Default() *Logger { return defaultLogger.Load() }
 
 // SetDefault makes l the default [Logger], which is used by
 // the top-level functions [Info], [Debug] and so on.
@@ -59,8 +56,11 @@ func SetDefault(l *Logger) {
 	if l == nil {
 		return
 	}
-	defaultLogger.Store(l)
+	defaultLogger.Store(l.WithContext(withCallerDepthKey(l.ctx, 1)))
 }
+
+// Default returns the default [Logger].
+func Default() *Logger { return defaultLogger.Load() }
 
 // InitManager init global manager
 func InitManager(name string, fields ...any) {

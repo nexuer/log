@@ -521,13 +521,13 @@ func stack(skip, nFrames int) string {
 	i := 0
 	for {
 		frame, more := frames.Next()
-		fmt.Fprintf(&b, "called from %s (%s:%d)\n", frame.Function, frame.File, frame.Line)
+		_, _ = fmt.Fprintf(&b, "called from %s (%s:%d)\n", frame.Function, frame.File, frame.Line)
 		if !more {
 			break
 		}
 		i++
 		if i >= nFrames {
-			fmt.Fprintf(&b, "(rest of stack elided)\n")
+			_, _ = fmt.Fprintf(&b, "(rest of stack elided)\n")
 			break
 		}
 	}
@@ -555,9 +555,24 @@ func Timestamp(layout string) Valuer {
 	}
 }
 
+var callerDepthKey = struct{}{}
+
+func withCallerDepthKey(ctx context.Context, depth int) context.Context {
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+	return context.WithValue(ctx, callerDepthKey, depth)
+}
+
 func Caller(depth int) Valuer {
 	return func(ctx context.Context) Value {
-		_, file, line, _ := runtime.Caller(depth)
+		skip := depth
+		if ctx != nil {
+			if extraDepth, ok := ctx.Value(callerDepthKey).(int); ok && extraDepth > 0 {
+				skip += extraDepth
+			}
+		}
+		_, file, line, _ := runtime.Caller(skip)
 		idx := strings.LastIndexByte(file, '/')
 		if idx == -1 {
 			return StringValue(file[idx+1:] + ":" + strconv.Itoa(line))
