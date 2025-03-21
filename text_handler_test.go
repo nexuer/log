@@ -49,7 +49,8 @@ func BenchmarkSlogTextInfo(b *testing.B) {
 
 func BenchmarkTextInfoWith(b *testing.B) {
 	l := New(output).With(
-
+		"ts", DefaultTimestamp,
+		"caller", DefaultCaller,
 		"key1", 10,
 		"key2", 20.2,
 		"key3", true,
