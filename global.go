@@ -94,9 +94,9 @@ func Debugf(format string, args ...any) {
 	Default().Debugf(format, args...)
 }
 
-// DebugS logs a message at debug level with fields.
-func DebugS(msg string, fields ...any) {
-	Default().DebugS(msg, fields...)
+// DebugS logs a message at debug level with key vals.
+func DebugS(msg string, kvs ...any) {
+	Default().DebugS(msg, kvs...)
 }
 
 // Info logs a message at info level.
@@ -109,9 +109,9 @@ func Infof(format string, args ...any) {
 	Default().Infof(format, args...)
 }
 
-// InfoS logs a message at info level with fields.
-func InfoS(msg string, fields ...any) {
-	Default().InfoS(msg, fields...)
+// InfoS logs a message at info level with key vals.
+func InfoS(msg string, kvs ...any) {
+	Default().InfoS(msg, kvs...)
 }
 
 // Warn logs a message at warn level.
@@ -124,9 +124,9 @@ func Warnf(format string, args ...any) {
 	Default().Warnf(format, args...)
 }
 
-// WarnS logs a message at warn level with fields.
-func WarnS(msg string, fields ...any) {
-	Default().WarnS(msg, fields...)
+// WarnS logs a message at warn level with key vals.
+func WarnS(msg string, kvs ...any) {
+	Default().WarnS(msg, kvs...)
 }
 
 // Error logs a message at error level.
@@ -139,9 +139,9 @@ func Errorf(format string, args ...any) {
 	Default().Errorf(format, args...)
 }
 
-// ErrorS logs a message at error level with fields.
-func ErrorS(err error, msg string, fields ...any) {
-	Default().ErrorS(err, msg, fields...)
+// ErrorS logs a message at error level with key vals.
+func ErrorS(err error, msg string, kvs ...any) {
+	Default().ErrorS(err, msg, kvs...)
 }
 
 // Fatal logs a message at fatal level.
@@ -155,6 +155,6 @@ func Fatalf(format string, args ...any) {
 }
 
 // FatalS logs a message at fatal level with key vals.
-func FatalS(err error, msg string, fields ...any) {
-	Default().FatalS(err, msg, fields...)
+func FatalS(err error, msg string, kvs ...any) {
+	Default().FatalS(err, msg, kvs...)
 }

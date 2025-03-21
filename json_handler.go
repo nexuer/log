@@ -18,18 +18,18 @@ type jsonHandler struct {
 	handler *commonHandler
 }
 
-func Json(name ...string) Handler {
-	n := ""
-	if len(name) > 0 && name[0] != "" {
-		n = name[0]
+func Json(opts ...*HandlerOptions) Handler {
+	opt := new(HandlerOptions)
+	if len(opts) > 0 && opts[0] != nil {
+		opt = opts[0]
 	}
 	return &jsonHandler{
-		handler: newCommonHandler(n, true),
+		handler: newCommonHandler(true, *opt),
 	}
 }
 
 func (j *jsonHandler) With(kvs ...any) Handler {
-	fields, ok := fieldsToAttrSlice(kvs)
+	fields, ok := kvsToFieldSlice(kvs)
 	return &textHandler{
 		handler: j.handler.withFields(fields, ok),
 	}
@@ -74,13 +74,12 @@ func appendJSONValue(s *handleState, v Value) error {
 	case KindTime:
 		s.appendTime(v.Time())
 	case KindAny:
-		switch anyVal := v.Any().(type) {
-		case error:
-			s.appendString(anyVal.Error())
-		case json.Marshaler:
-			return appendJSONMarshal(s.buf, anyVal)
-		default:
-			s.appendString(Sprintf("%+v", anyVal))
+		a := v.any
+		_, jm := a.(json.Marshaler)
+		if err, ok := a.(error); ok && !jm {
+			s.appendString(err.Error())
+		} else {
+			return appendJSONMarshal(s.buf, a)
 		}
 	default:
 		panic(fmt.Sprintf("bad kind: %s", v.Kind()))

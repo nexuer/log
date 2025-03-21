@@ -5,6 +5,7 @@
 package buffer
 
 import (
+	"fmt"
 	"testing"
 )
 
@@ -14,7 +15,9 @@ func Test(t *testing.T) {
 	b.WriteString("hello")
 	b.WriteByte(',')
 	b.Write([]byte(" world"))
-
+	fmt.Println(b.Len(), b.Cap())
+	b.SetCap(b.Len())
+	fmt.Println(b.Len(), b.Cap())
 	got := b.String()
 	want := "hello, world"
 	if got != want {

@@ -4,15 +4,16 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 )
 
 type Handler interface {
 	// With returns a new Handler whose attributes consist of
-	// both the receiver's attributes and the fields.
+	// both the receiver's attributes and the key vals.
 	// The Handler owns the slice: it may retain, modify or discard it.
-	With(fields ...any) Handler
+	With(kvs ...any) Handler
 	// Handle handles the Log with Context, Writer, Level , Message and the arguments.
-	Handle(ctx context.Context, w io.Writer, level Level, msg string, fields ...any) error
+	Handle(ctx context.Context, w io.Writer, level Level, msg string, kvs ...any) error
 }
 
 // Keys for "built-in" attributes.
@@ -115,7 +116,7 @@ func (l *Logger) enable(level Level) bool {
 //   - w: The io.Writer to which the log entry will be written (e.g., os.Stdout, a file).
 //   - level: The log level (e.g., INFO, WARN, ERROR) for this entry.
 //   - msg: The log message to be written.
-//   - fields: Optional variadic arguments representing additional log fields (e.g., key-value pairs).
+//   - kvs: Optional variadic arguments representing additional log fields (e.g., key-value pairs).
 //
 // Returns:
 //   - error: Returns nil if the log entry is successfully written or skipped, an error if the handler
@@ -124,8 +125,8 @@ func (l *Logger) enable(level Level) bool {
 // Example:
 //
 //	logger.LogTo(os.Stdout, log.LevelInfo, "Service started", GOOS, runtime.GOOS)
-func (l *Logger) LogTo(w io.Writer, level Level, msg string, fields ...any) error {
-	return l.LogContextTo(l.ctx, w, level, msg, fields...)
+func (l *Logger) LogTo(w io.Writer, level Level, msg string, kvs ...any) error {
+	return l.LogContextTo(l.ctx, w, level, msg, kvs...)
 }
 
 // LogContextTo writes a log entry to the specified io.Writer with the given context, level, message, and fields.
@@ -137,7 +138,7 @@ func (l *Logger) LogTo(w io.Writer, level Level, msg string, fields ...any) erro
 //   - w: The io.Writer to which the log entry will be written (e.g., os.Stdout, a file).
 //   - level: The log level (e.g., INFO, WARN, ERROR) for this entry.
 //   - msg: The log message to be written.
-//   - fields: Optional variadic arguments representing additional log fields (e.g., key-value pairs).
+//   - kvs: Optional variadic arguments representing additional log fields (e.g., key-value pairs).
 //
 // Returns:
 //   - error: Returns nil if the log entry is successfully written or skipped, an error if the handler
@@ -146,8 +147,8 @@ func (l *Logger) LogTo(w io.Writer, level Level, msg string, fields ...any) erro
 // Example:
 //
 //	logger.LogContextTo(ctx, os.Stdout, log.LevelInfo, "Service started", GOOS, runtime.GOOS)
-func (l *Logger) LogContextTo(ctx context.Context, w io.Writer, level Level, msg string, fields ...any) error {
-	if (msg == "" && len(fields) == 0) || !l.enable(level) {
+func (l *Logger) LogContextTo(ctx context.Context, w io.Writer, level Level, msg string, kvs ...any) error {
+	if (msg == "" && len(kvs) == 0) || !l.enable(level) {
 		return nil
 	}
 
@@ -155,7 +156,7 @@ func (l *Logger) LogContextTo(ctx context.Context, w io.Writer, level Level, msg
 		return errors.New("logger handler is nil")
 	}
 
-	if err := l.handler.Handle(ctx, w, level, msg, fields...); err != nil {
+	if err := l.handler.Handle(ctx, w, level, msg, kvs...); err != nil {
 		return err
 	}
 
@@ -169,7 +170,7 @@ func (l *Logger) LogContextTo(ctx context.Context, w io.Writer, level Level, msg
 // Parameters:
 //   - level: The log level (e.g., INFO, WARN, ERROR) for this entry.
 //   - msg: The log message to be written.
-//   - fields: Optional variadic arguments representing additional log fields (e.g., key-value pairs).
+//   - kvs: Optional variadic arguments representing additional log fields (e.g., key-value pairs).
 //
 // Returns:
 //   - error: Returns nil if the log entry is successfully written or skipped, an error if the handler
@@ -178,8 +179,8 @@ func (l *Logger) LogContextTo(ctx context.Context, w io.Writer, level Level, msg
 // Example:
 //
 //	logger.Log(log.LevelInfo, "Service started", GOOS, runtime.GOOS)
-func (l *Logger) Log(level Level, msg string, fields ...any) error {
-	return l.LogContextTo(l.ctx, l.w, level, msg, fields...)
+func (l *Logger) Log(level Level, msg string, kvs ...any) error {
+	return l.LogContextTo(l.ctx, l.w, level, msg, kvs...)
 }
 
 // LogContext writes a log entry using the specified context and the logger's default io.Writer with the given level, message, and fields.
@@ -190,7 +191,7 @@ func (l *Logger) Log(level Level, msg string, fields ...any) error {
 //   - ctx: The context to pass to the handler, which may include metadata or cancellation signals.
 //   - level: The log level (e.g., INFO, WARN, ERROR) for this entry.
 //   - msg: The log message to be written.
-//   - fields: Optional variadic arguments representing additional log fields (e.g., key-value pairs).
+//   - kvs: Optional variadic arguments representing additional log fields (e.g., key-value pairs).
 //
 // Returns:
 //   - error: Returns nil if the log entry is successfully written or skipped, an error if the handler
@@ -199,16 +200,16 @@ func (l *Logger) Log(level Level, msg string, fields ...any) error {
 // Example:
 //
 //	logger.LogContext(ctx, log.LevelInfo, "Service started", GOOS, runtime.GOOS)
-func (l *Logger) LogContext(ctx context.Context, level Level, msg string, fields ...any) error {
-	return l.LogContextTo(ctx, l.w, level, msg, fields...)
+func (l *Logger) LogContext(ctx context.Context, level Level, msg string, kvs ...any) error {
+	return l.LogContextTo(ctx, l.w, level, msg, kvs...)
 }
 
-func (l *Logger) With(fields ...any) *Logger {
-	if len(fields) == 0 || l.handler == nil {
+func (l *Logger) With(kvs ...any) *Logger {
+	if len(kvs) == 0 || l.handler == nil {
 		return l
 	}
 	l2 := l.clone()
-	l2.handler = l.handler.With(fields...)
+	l2.handler = l.handler.With(kvs...)
 	return l2
 }
 
@@ -230,9 +231,9 @@ func (l *Logger) Debugf(format string, args ...any) {
 	errorHandler(err)
 }
 
-// DebugS logs a message at debug level with fields.
-func (l *Logger) DebugS(msg string, fields ...any) {
-	err := l.Log(LevelDebug, msg, fields...)
+// DebugS logs a message at debug level with key vals.
+func (l *Logger) DebugS(msg string, kvs ...any) {
+	err := l.Log(LevelDebug, msg, kvs...)
 	errorHandler(err)
 }
 
@@ -248,9 +249,9 @@ func (l *Logger) Infof(format string, args ...any) {
 	errorHandler(err)
 }
 
-// InfoS logs a message at info level with fields.
-func (l *Logger) InfoS(msg string, fields ...any) {
-	err := l.Log(LevelInfo, msg, fields...)
+// InfoS logs a message at info level with key vals.
+func (l *Logger) InfoS(msg string, kvs ...any) {
+	err := l.Log(LevelInfo, msg, kvs...)
 	errorHandler(err)
 }
 
@@ -266,9 +267,9 @@ func (l *Logger) Warnf(format string, args ...any) {
 	errorHandler(err)
 }
 
-// WarnS logs a message at warn level with fields.
-func (l *Logger) WarnS(msg string, fields ...any) {
-	err := l.Log(LevelWarn, msg, fields...)
+// WarnS logs a message at warn level with key vals.
+func (l *Logger) WarnS(msg string, kvs ...any) {
+	err := l.Log(LevelWarn, msg, kvs...)
 	errorHandler(err)
 }
 
@@ -284,19 +285,19 @@ func (l *Logger) Errorf(format string, args ...any) {
 	errorHandler(err)
 }
 
-// ErrorS logs a message at error level with fields.
-func (l *Logger) ErrorS(err error, msg string, fields ...any) {
+// ErrorS logs a message at error level with key vals.
+func (l *Logger) ErrorS(err error, msg string, kvs ...any) {
 	if err == nil {
-		errorHandler(l.Log(LevelError, msg, fields...))
+		errorHandler(l.Log(LevelError, msg, kvs...))
 		return
 	}
-	if len(fields) == 0 {
+	if len(kvs) == 0 {
 		errorHandler(l.Log(LevelError, msg, ErrKey, err.Error()))
 		return
 	}
-	nv := make([]any, 0, len(fields)+2)
+	nv := make([]any, 0, len(kvs)+2)
 	nv = append(nv, ErrKey, err.Error())
-	nv = append(nv, fields...)
+	nv = append(nv, kvs...)
 	errorHandler(l.Log(LevelError, msg, nv...))
 }
 
@@ -304,28 +305,34 @@ func (l *Logger) ErrorS(err error, msg string, fields ...any) {
 func (l *Logger) Fatal(args ...any) {
 	err := l.Log(LevelFatal, getMessage("", args))
 	errorHandler(err)
+
+	os.Exit(1)
 }
 
 // Fatalf logs a message at warn level.
 func (l *Logger) Fatalf(format string, args ...any) {
 	err := l.Log(LevelFatal, getMessage(format, args))
 	errorHandler(err)
+
+	os.Exit(1)
 }
 
-// FatalS logs a message at fatal level with kvs.
-func (l *Logger) FatalS(err error, msg string, fields ...any) {
+// FatalS logs a message at fatal level with key vals.
+func (l *Logger) FatalS(err error, msg string, kvs ...any) {
 	if err == nil {
-		errorHandler(l.Log(LevelFatal, msg, fields...))
+		errorHandler(l.Log(LevelFatal, msg, kvs...))
 		return
 	}
-	if len(fields) == 0 {
+	if len(kvs) == 0 {
 		errorHandler(l.Log(LevelFatal, msg, ErrKey, err.Error()))
 		return
 	}
-	nv := make([]any, 0, len(fields)+2)
+	nv := make([]any, 0, len(kvs)+2)
 	nv = append(nv, ErrKey, err.Error())
-	nv = append(nv, fields...)
+	nv = append(nv, kvs...)
 	errorHandler(l.Log(LevelFatal, msg, nv...))
+
+	os.Exit(1)
 }
 
 // getMessage format with Sprint, Sprintf, or neither.

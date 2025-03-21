@@ -60,8 +60,8 @@ func Duration(key string, v time.Duration) Field {
 // Use Group to collect several key-value pairs under a single
 // key on a log line, or as the result of LogValue
 // in order to log a single value as multiple Attrs.
-func Group(key string, args ...any) Field {
-	fields, _ := fieldsToAttrSlice(args)
+func Group(key string, kvs ...any) Field {
+	fields, _ := kvsToFieldSlice(kvs)
 	return Field{key, GroupValue(fields...)}
 }
 
@@ -73,14 +73,14 @@ func Any(key string, value any) Field {
 
 const badKey = "<BAD_KEY>"
 
-func fieldsToAttrSlice(args []any) ([]Field, bool) {
+func kvsToFieldSlice(kvs []any) ([]Field, bool) {
 	var (
 		field  Field
 		fields []Field
 	)
 	hasDynamic := false
-	for len(args) > 0 {
-		field, args = fieldsToAttr(args)
+	for len(kvs) > 0 {
+		field, kvs = kvsToField(kvs)
 		if field.Value.Kind() == KindValuer {
 			if !hasDynamic {
 				hasDynamic = true
@@ -91,25 +91,25 @@ func fieldsToAttrSlice(args []any) ([]Field, bool) {
 	return fields, hasDynamic
 }
 
-// fieldsToAttr turns a prefix of the nonempty args slice into an Attr
+// kvsToField turns a prefix of the nonempty args slice into an Attr
 // and returns the unconsumed portion of the slice.
 // If args[0] is an Attr, it returns it.
 // If args[0] is a string, it treats the first two elements as
 // a key-value pair.
 // Otherwise, it treats args[0] as a value with a missing key.
-func fieldsToAttr(args []any) (Field, []any) {
-	switch x := args[0].(type) {
+func kvsToField(kvs []any) (Field, []any) {
+	switch x := kvs[0].(type) {
 	case string:
-		if len(args) == 1 {
+		if len(kvs) == 1 {
 			return String(badKey, x), nil
 		}
-		return Any(x, args[1]), args[2:]
+		return Any(x, kvs[1]), kvs[2:]
 
 	case Field:
-		return x, args[1:]
+		return x, kvs[1:]
 
 	default:
-		return Any(badKey, x), args[1:]
+		return Any(badKey, x), kvs[1:]
 	}
 }
 

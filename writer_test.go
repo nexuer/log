@@ -6,7 +6,7 @@ import (
 )
 
 func TestMultiWriteCloser(t *testing.T) {
-	logger := New(MultiWriteCloser(os.Stdout, os.Stderr))
+	logger := New(MultiWriter(os.Stdout, os.Stderr))
 
 	logger.Info("hello world")
 	if err := logger.Close(); err != nil {
@@ -15,7 +15,7 @@ func TestMultiWriteCloser(t *testing.T) {
 }
 
 func TestMultiWriter(t *testing.T) {
-	logger := New(TryMultiWriteCloser(StrategyFirst, os.Stdout, os.Stderr))
+	logger := New(TryMultiWriter(StrategyFirst, os.Stdout, os.Stderr))
 	logger.Info("hello world")
 	if err := logger.Close(); err != nil {
 		t.Fatal(err)

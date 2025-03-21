@@ -6,9 +6,11 @@ import (
 	"io"
 	"reflect"
 	"slices"
-	"strings"
+	"strconv"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/nexuer/log/internal/buffer"
 )
@@ -19,46 +21,53 @@ type preformattedAttr struct {
 	valuer Valuer
 }
 
-type commonHandler struct {
-	json              bool
-	name              string
-	mu                *sync.Mutex
-	preformattedAttrs []preformattedAttr
+type HandlerOptions struct {
+	Name     string
+	Replacer Replacer
 }
 
-func newCommonHandler(name string, json bool) *commonHandler {
+type commonHandler struct {
+	json              bool
+	opts              HandlerOptions
+	preformattedAttrs []preformattedAttr
+	// groupPrefix is for the text handler only.
+	// It holds the prefix for groups that were already pre-formatted.
+	// A group will appear here when a call to WithGroup is followed by
+	// a call to WithAttrs.
+	groupPrefix string
+	groups      []string // all groups started from WithGroup
+	nOpenGroups int      // the number of groups opened in preformattedAttrs
+	mu          *sync.Mutex
+}
+
+func newCommonHandler(json bool, opts HandlerOptions) *commonHandler {
 	ch := &commonHandler{
 		mu:   &sync.Mutex{},
 		json: json,
 	}
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ch
-	}
-	if json {
-		return ch.withFields([]Field{String(NameKey, name)}, true)
-	} else {
-		ch.name = name + " | "
-	}
+	//name = strings.TrimSpace(name)
+	//if name == "" {
+	//	return ch
+	//}
+	//if json {
+	//	return ch.withFields([]Field{String(NameKey, name)}, true)
+	//} else {
+	//	ch.name = name + " | "
+	//}
 	return ch
 }
 
 func (h *commonHandler) clone() *commonHandler {
 	// We can't use assignment because we can't copy the mutex.
 	return &commonHandler{
-		name:              h.name,
 		json:              h.json,
+		opts:              h.opts,
 		preformattedAttrs: slices.Clip(h.preformattedAttrs),
+		groupPrefix:       h.groupPrefix,
+		groups:            slices.Clip(h.groups),
+		nOpenGroups:       h.nOpenGroups,
 		mu:                h.mu, // mutex shared among all clones of this handler
 	}
-}
-
-// attrSep returns the separator between attributes.
-func (h *commonHandler) attrSep() string {
-	if h.json {
-		return ","
-	}
-	return " "
 }
 
 func (h *commonHandler) withFields(fields []Field, min bool) *commonHandler {
@@ -69,14 +78,99 @@ func (h *commonHandler) withFields(fields []Field, min bool) *commonHandler {
 	}
 	h2 := h.clone()
 	var state handleState
-	if min {
-		state = h2.newHandleState(buffer.NewMin(), false, h.attrSep())
-	} else {
-		state = h2.newHandleState(buffer.New(), false, h.attrSep())
-	}
+	state = h2.newHandleState(buffer.NewNonCap(), false, h.attrSep())
+	//if min {
+	//	state = h2.newHandleState(buffer.NewMin(), false, h.attrSep())
+	//} else {
+	//	state = h2.newHandleState(buffer.New(), false, h.attrSep())
+	//}
 	defer state.free()
+	//pos := state.buf.Len()
+	//state
 	state.appendFields(context.Background(), "", fields, true)
+	//state.appendFields2(context.Background(), fields, true)
 	return h2
+}
+
+func (h *commonHandler) withFields2(fields []Field, min bool) *commonHandler {
+	// We are going to ignore empty groups, so if the entire slice consists of
+	// them, there is nothing to do.
+	if countEmptyGroups(fields) == len(fields) {
+		return h
+	}
+	h2 := h.clone()
+	var state handleState
+	state = h2.newHandleState(buffer.NewNonCap(), false, h.attrSep())
+	//if min {
+	//	state = h2.newHandleState(buffer.NewMin(), false, h.attrSep())
+	//} else {
+	//	state = h2.newHandleState(buffer.New(), false, h.attrSep())
+	//}
+	defer state.free()
+	//pos := state.buf.Len()
+	//state
+	//state.appendFields(context.Background(), "", fields, true)
+	state.appendFields2(context.Background(), fields, true)
+	return h2
+}
+
+func (s *handleState) appendFields2(ctx context.Context, fields []Field, isPreformat bool) bool {
+	nonEmpty := false
+	last := len(fields) - 1
+	for i, field := range fields {
+		if s.appendField(ctx, field, isPreformat, i == last) {
+			nonEmpty = true
+		}
+	}
+	return nonEmpty
+}
+
+func (s *handleState) appendField(ctx context.Context, field Field, isPreformat bool, isLast bool) bool {
+	if rep := s.h.opts.Replacer; rep != nil && field.Value.Kind() != KindGroup {
+		var gs []string
+		if s.groups != nil {
+			gs = *s.groups
+		}
+		// a.Value is resolved before calling ReplaceAttr, so the user doesn't have to.
+		field = rep(gs, field)
+	}
+	// Elide empty Attrs.
+	if field.isEmpty() {
+		return false
+	}
+	// Valuer
+	if v := field.Value; v.Kind() == KindValuer {
+		s.appendKey(field.Key)
+		if isPreformat {
+			s.h.preformattedAttrs = append(s.h.preformattedAttrs, preformattedAttr{
+				bytes:  *s.buf,
+				valuer: v.valuer(),
+			})
+
+			if !isLast {
+				s.buf = buffer.NewNonCap()
+			}
+		} else {
+			s.appendValue(v.Resolve(ctx))
+		}
+	}
+
+	if field.Value.Kind() == KindGroup {
+
+	} else {
+		s.appendKey(field.Key)
+		s.appendValue(field.Value)
+	}
+
+	return false
+}
+
+// attrSep returns the separator between attributes.
+func (h *commonHandler) attrSep() string {
+	if h.json {
+		return ","
+	}
+	return " "
 }
 
 // handleState holds state for a single call to commonHandler.handle.
@@ -85,8 +179,9 @@ func (h *commonHandler) withFields(fields []Field, min bool) *commonHandler {
 type handleState struct {
 	h       *commonHandler
 	buf     *buffer.Buffer
-	freeBuf bool   // should buf be freed?
-	sep     string // separator to write before next key
+	freeBuf bool      // should buf be freed?
+	sep     string    // separator to write before next key
+	groups  *[]string // pool-allocated slice of active groups, for ReplaceAttr
 }
 
 func (h *commonHandler) newHandleState(buf *buffer.Buffer, freeBuf bool, sep string) handleState {
@@ -148,9 +243,38 @@ func (s *handleState) appendString(str string) {
 		*s.buf = appendEscapedJSONString(*s.buf, str)
 		_ = s.buf.WriteByte('"')
 	} else {
-		// text todo: needsQuoting
-		_, _ = s.buf.WriteString(str)
+		if needsQuoting(str) {
+			*s.buf = strconv.AppendQuote(*s.buf, str)
+		} else {
+			_, _ = s.buf.WriteString(str)
+		}
+		//// text todo: needsQuoting
+		//_, _ = s.buf.WriteString(str)
 	}
+}
+
+func needsQuoting(s string) bool {
+	if len(s) == 0 {
+		return true
+	}
+	for i := 0; i < len(s); {
+		b := s[i]
+		if b < utf8.RuneSelf {
+			// Quote anything except a backslash that would need quoting in a
+			// JSON string, as well as space and '='
+			if b != '\\' && (b == ' ' || b == '=' || !safeSet[b]) {
+				return true
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r == utf8.RuneError || unicode.IsSpace(r) || !unicode.IsPrint(r) {
+			return true
+		}
+		i += size
+	}
+	return false
 }
 
 func (s *handleState) appendFields(ctx context.Context, group string, fields []Field, isPreformat bool) {
@@ -294,7 +418,7 @@ func (s *handleState) appendPreformattedAttrs(ctx context.Context) {
 func (s *handleState) appendByAnyFields(ctx context.Context, kvs []any) {
 	var a Field
 	for len(kvs) > 0 {
-		a, kvs = fieldsToAttr(kvs)
+		a, kvs = kvsToField(kvs)
 		s.appendFields(ctx, "", []Field{a}, false)
 	}
 }
@@ -307,9 +431,9 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 		state.appendByte('{')
 	}
 
-	if len(h.name) > 0 {
-		state.appendString(h.name)
-	}
+	//if len(h.name) > 0 {
+	//	_, _ = state.buf.WriteString(h.name)
+	//}
 
 	// level
 	if h.json {

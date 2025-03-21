@@ -564,7 +564,11 @@ func withCallerDepthKey(ctx context.Context, depth int) context.Context {
 	return context.WithValue(ctx, callerDepthKey, depth)
 }
 
-func Caller(depth int) Valuer {
+func Caller(depth int, full ...bool) Valuer {
+	fullFilename := false
+	if len(full) > 0 && full[0] {
+		fullFilename = true
+	}
 	return func(ctx context.Context) Value {
 		skip := depth
 		if ctx != nil {
@@ -573,6 +577,9 @@ func Caller(depth int) Valuer {
 			}
 		}
 		_, file, line, _ := runtime.Caller(skip)
+		if fullFilename {
+			return StringValue(file + ":" + strconv.Itoa(line))
+		}
 		idx := strings.LastIndexByte(file, '/')
 		if idx == -1 {
 			return StringValue(file[idx+1:] + ":" + strconv.Itoa(line))

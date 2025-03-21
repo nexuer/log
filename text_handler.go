@@ -14,18 +14,18 @@ type textHandler struct {
 	handler *commonHandler
 }
 
-func Text(name ...string) Handler {
-	n := ""
-	if len(name) > 0 && name[0] != "" {
-		n = name[0]
+func Text(opts ...*HandlerOptions) Handler {
+	opt := new(HandlerOptions)
+	if len(opts) > 0 && opts[0] != nil {
+		opt = opts[0]
 	}
 	return &textHandler{
-		handler: newCommonHandler(n, false),
+		handler: newCommonHandler(false, *opt),
 	}
 }
 
 func (h *textHandler) With(kvs ...any) Handler {
-	fields, ok := fieldsToAttrSlice(kvs)
+	fields, ok := kvsToFieldSlice(kvs)
 	return &textHandler{
 		handler: h.handler.withFields(fields, ok),
 	}
@@ -61,23 +61,30 @@ func appendTextValue(s *handleState, v Value) error {
 	case KindTime:
 		s.appendTime(v.time())
 	case KindAny:
-		switch anyVal := v.any.(type) {
-		case error:
-			s.appendString(anyVal.Error())
-		case encoding.TextMarshaler:
-			data, err := anyVal.MarshalText()
+		if e, ok := v.any.(error); ok {
+			if e != nil {
+				s.appendString(e.Error())
+			} else {
+				s.appendString("<nil>")
+			}
+			return nil
+		}
+
+		if tm, ok := v.any.(encoding.TextMarshaler); ok {
+			data, err := tm.MarshalText()
 			if err != nil {
 				return err
 			}
 			s.appendString(bytesToString(data))
-		default:
-			if bs, ok := byteSlice(v.any); ok {
-				// As of Go 1.19, this only allocates for strings longer than 32 bytes.
-				_, _ = s.buf.WriteString(strconv.Quote(string(bs)))
-				return nil
-			}
-			s.appendString(fmt.Sprintf("%+v", anyVal))
+			return nil
 		}
+
+		if bs, ok := byteSlice(v.any); ok {
+			// As of Go 1.19, this only allocates for strings longer than 32 bytes.
+			_, _ = s.buf.WriteString(strconv.Quote(string(bs)))
+			return nil
+		}
+		s.appendString(fmt.Sprintf("%+v", v.Any()))
 	default:
 		*s.buf = v.append(*s.buf)
 	}

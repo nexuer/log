@@ -2,6 +2,7 @@ package log
 
 import (
 	"errors"
+	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
 )
 
@@ -30,11 +31,11 @@ func addWriteCloser(w io.Writer) io.WriteCloser {
 	}
 }
 
-type multiWriteCloser struct {
+type multiWriter struct {
 	writers []io.Writer
 }
 
-func (t multiWriteCloser) Write(p []byte) (n int, err error) {
+func (t multiWriter) Write(p []byte) (n int, err error) {
 	for _, w := range t.writers {
 		n, err = w.Write(p)
 		if err != nil {
@@ -51,7 +52,7 @@ func (t multiWriteCloser) Write(p []byte) (n int, err error) {
 // Close on all the underlying writers that are io.Closers. If any of the
 // Close methods return an error, the remainder of the closers are not closed
 // and the error is returned.
-func (t multiWriteCloser) Close() error {
+func (t multiWriter) Close() error {
 	for _, w := range t.writers {
 		if closer, ok := w.(io.Closer); ok {
 			if err := closer.Close(); err != nil {
@@ -62,24 +63,24 @@ func (t multiWriteCloser) Close() error {
 	return nil
 }
 
-// MultiWriteCloser creates a writer that duplicates its writes to all the
+// MultiWriter creates a writer that duplicates its writes to all the
 // provided writers, similar to the Unix tee(1) command.
 //
 // Each write is written to each listed writer, one at a time.
 // If a listed writer returns an error, that overall write operation
 // stops and returns the error; it does not continue down the list.
-func MultiWriteCloser(writers ...io.Writer) io.WriteCloser {
+func MultiWriter(writers ...io.Writer) io.Writer {
 	allWriters := make([]io.Writer, 0, len(writers))
 	for _, w := range writers {
-		if mw, ok := w.(*multiWriteCloser); ok {
+		if mw, ok := w.(*multiWriter); ok {
 			allWriters = append(allWriters, mw.writers...)
-		} else if mw, ok := w.(*tryMultiWriteCloser); ok {
+		} else if mw, ok := w.(*tryMultiWriter); ok {
 			allWriters = append(allWriters, mw.writers...)
 		} else {
 			allWriters = append(allWriters, w)
 		}
 	}
-	return &multiWriteCloser{allWriters}
+	return &multiWriter{allWriters}
 }
 
 // ByteCountStrategy defines the strategy for determining the number of bytes returned by Write.
@@ -94,7 +95,7 @@ const (
 	StrategyMax
 )
 
-type tryMultiWriteCloser struct {
+type tryMultiWriter struct {
 	writers           []io.Writer
 	byteCountStrategy ByteCountStrategy
 }
@@ -104,7 +105,7 @@ type tryMultiWriteCloser struct {
 // - StrategyFirst: first writer's byte count.
 // - StrategyMinSuccess: minimum byte count among successful writes.
 // - StrategyMaxSuccess: maximum byte count among successful writes.
-func (t *tryMultiWriteCloser) Write(p []byte) (n int, err error) {
+func (t *tryMultiWriter) Write(p []byte) (n int, err error) {
 	var errs []error
 	firstN := 0
 	minN := len(p)
@@ -140,7 +141,7 @@ func (t *tryMultiWriteCloser) Write(p []byte) (n int, err error) {
 	}
 }
 
-func (t *tryMultiWriteCloser) Close() error {
+func (t *tryMultiWriter) Close() error {
 	var errs []error
 	for _, w := range t.writers {
 		if wc, ok := w.(io.Closer); ok {
@@ -152,19 +153,32 @@ func (t *tryMultiWriteCloser) Close() error {
 	return errors.Join(errs...)
 }
 
-// TryMultiWriteCloser creates a writer that attempts to write to all provided io.Writers.
+// TryMultiWriter creates a writer that attempts to write to all provided io.Writers.
 // The first argument specifies the byte count strategy, which determines how the returned
 // byte count is calculated. It collects all errors and joins them with errors.Join.
-func TryMultiWriteCloser(strategy ByteCountStrategy, writers ...io.Writer) io.Writer {
+func TryMultiWriter(strategy ByteCountStrategy, writers ...io.Writer) io.Writer {
 	allWriters := make([]io.Writer, 0, len(writers))
 	for _, w := range writers {
-		if mw, ok := w.(*multiWriteCloser); ok {
+		if mw, ok := w.(*multiWriter); ok {
 			allWriters = append(allWriters, mw.writers...)
-		} else if mw, ok := w.(*tryMultiWriteCloser); ok {
+		} else if mw, ok := w.(*tryMultiWriter); ok {
 			allWriters = append(allWriters, mw.writers...)
 		} else {
 			allWriters = append(allWriters, w)
 		}
 	}
-	return &tryMultiWriteCloser{allWriters, strategy}
+	return &tryMultiWriter{allWriters, strategy}
+}
+
+func FileWriter(path string, size int64, backups int64, compress ...bool) io.Writer {
+	w := &lumberjack.Logger{
+		Filename:   path,
+		MaxSize:    int(size),
+		MaxBackups: int(backups),
+		LocalTime:  true,
+	}
+	if len(compress) > 0 && compress[0] {
+		w.Compress = true
+	}
+	return w
 }

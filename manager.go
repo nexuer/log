@@ -61,19 +61,6 @@ func AddFlags(fs *flag.FlagSet) {
 		fmt.Sprintf(`Maximum number of log file backups to retain, 0 means unlimited (default %d)`, defaultMaxBackups))
 }
 
-func file(path string, size int64, backups int64, compress ...bool) io.Writer {
-	w := &lumberjack.Logger{
-		Filename:   path,
-		MaxSize:    int(size),
-		MaxBackups: int(backups),
-		LocalTime:  true,
-	}
-	if len(compress) > 0 && compress[0] {
-		w.Compress = true
-	}
-	return w
-}
-
 func mergeOptions(opts *Options) *Options {
 	if opts == nil {
 		opts = &Options{
@@ -201,7 +188,7 @@ func (m *Manager) writer(name string, l *Logger) (io.Writer, string) {
 		if f, ok := l.Writer().(*lumberjack.Logger); ok && f.Filename == path {
 			return f, ""
 		}
-		return file(path, m.opts.MaxSize, m.opts.MaxBackups), path
+		return FileWriter(path, m.opts.MaxSize, m.opts.MaxBackups), path
 	case "stdout":
 		return os.Stdout, ""
 	default:
@@ -212,9 +199,9 @@ func (m *Manager) writer(name string, l *Logger) (io.Writer, string) {
 func (m *Manager) handler(name string, kvs []any) Handler {
 	switch strings.ToLower(m.opts.Format) {
 	case "json":
-		return Json(name).With(m.kvs(kvs)...)
+		return Json(&HandlerOptions{Name: name}).With(m.kvs(kvs)...)
 	default:
-		return Text(name).With(m.kvs(kvs)...)
+		return Text(&HandlerOptions{Name: name}).With(m.kvs(kvs)...)
 	}
 }
 

@@ -17,15 +17,15 @@ var bufPool = sync.Pool{
 }
 
 // Having an initial size gives a dramatic speedup.
-var minbufPool = sync.Pool{
+var nonCapBufPool = sync.Pool{
 	New: func() any {
-		b := make([]byte, 0, 256)
+		b := make([]byte, 0)
 		return (*Buffer)(&b)
 	},
 }
 
-func NewMin() *Buffer {
-	return minbufPool.Get().(*Buffer)
+func NewNonCap() *Buffer {
+	return nonCapBufPool.Get().(*Buffer)
 }
 
 func New() *Buffer {
@@ -66,6 +66,14 @@ func (b *Buffer) String() string {
 
 func (b *Buffer) Len() int {
 	return len(*b)
+}
+
+func (b *Buffer) Cap() int {
+	return cap(*b)
+}
+
+func (b *Buffer) SetCap(n int) {
+	*b = (*b)[:n:n]
 }
 
 func (b *Buffer) SetLen(n int) {
