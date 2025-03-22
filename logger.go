@@ -120,6 +120,17 @@ func (l *Logger) log(level Level, template string, fmtArgs []any, kvs ...any) er
 	return nil
 }
 
+func (l *Logger) Log(ctx context.Context, level Level, msg string, kvs ...any) error {
+	if !l.level.Enable(level) {
+		return nil
+	}
+
+	if l.handler != nil {
+		return l.Handle(ctx, l.w, level, msg, kvs...)
+	}
+	return nil
+}
+
 func (l *Logger) Handle(ctx context.Context, w io.Writer, level Level, msg string, kvs ...any) error {
 	return l.handler.Handle(ctx, w, level, msg, kvs...)
 }
