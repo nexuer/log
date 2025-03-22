@@ -591,7 +591,7 @@ func Timestamp(layout string) Valuer {
 
 var callerDepthKey = struct{}{}
 
-func withCallerDepthKey(ctx context.Context, depth int) context.Context {
+func WithCallerDepth(ctx context.Context, depth int) context.Context {
 	if ctx == nil {
 		ctx = context.TODO()
 	}

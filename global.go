@@ -44,7 +44,7 @@ func SetDefault(l *Logger) {
 	if l == nil {
 		return
 	}
-	defaultLogger.Store(l.WithContext(withCallerDepthKey(l.ctx, 1)))
+	defaultLogger.Store(l.WithContext(WithCallerDepth(l.ctx, 1)))
 }
 
 // Default returns the default [Logger].
