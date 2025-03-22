@@ -24,10 +24,9 @@ func Text(opts ...*HandlerOptions) Handler {
 	}
 }
 
-func (h *textHandler) With(kvs ...any) Handler {
-	fields, ok := kvsToFieldSlice(kvs)
+func (h *textHandler) WithFields(ctx context.Context, fields ...Field) Handler {
 	return &textHandler{
-		handler: h.handler.withFields(fields, ok),
+		handler: h.handler.withFields(ctx, fields),
 	}
 }
 
@@ -56,6 +55,15 @@ func bytesToString(data []byte) string {
 
 func appendTextValue(s *handleState, v Value) error {
 	switch v.Kind() {
+	case KindSource:
+		if v.any != nil {
+			source := v.source()
+			_, _ = s.buf.WriteString(source.File)
+			_, _ = s.buf.WriteString(":")
+			*s.buf = strconv.AppendInt(*s.buf, int64(source.Line), 10)
+		} else {
+			_, _ = s.buf.WriteString("<nil>")
+		}
 	case KindString:
 		s.appendString(v.str())
 	case KindTime:

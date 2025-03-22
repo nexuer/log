@@ -17,7 +17,6 @@ import (
 
 type preformattedAttr struct {
 	bytes  []byte
-	key    string
 	valuer Valuer
 }
 
@@ -30,30 +29,18 @@ type commonHandler struct {
 	json              bool
 	opts              HandlerOptions
 	preformattedAttrs []preformattedAttr
-	// groupPrefix is for the text handler only.
-	// It holds the prefix for groups that were already pre-formatted.
-	// A group will appear here when a call to WithGroup is followed by
-	// a call to WithAttrs.
-	groupPrefix string
-	groups      []string // all groups started from WithGroup
-	nOpenGroups int      // the number of groups opened in preformattedAttrs
-	mu          *sync.Mutex
+	mu                *sync.Mutex
 }
 
 func newCommonHandler(json bool, opts HandlerOptions) *commonHandler {
 	ch := &commonHandler{
 		mu:   &sync.Mutex{},
 		json: json,
+		opts: opts,
 	}
-	//name = strings.TrimSpace(name)
-	//if name == "" {
-	//	return ch
-	//}
-	//if json {
-	//	return ch.withFields([]Field{String(NameKey, name)}, true)
-	//} else {
-	//	ch.name = name + " | "
-	//}
+	if json && opts.Name != "" {
+		return ch.withFields(context.Background(), []Field{String(NameKey, opts.Name)})
+	}
 	return ch
 }
 
@@ -63,14 +50,11 @@ func (h *commonHandler) clone() *commonHandler {
 		json:              h.json,
 		opts:              h.opts,
 		preformattedAttrs: slices.Clip(h.preformattedAttrs),
-		groupPrefix:       h.groupPrefix,
-		groups:            slices.Clip(h.groups),
-		nOpenGroups:       h.nOpenGroups,
 		mu:                h.mu, // mutex shared among all clones of this handler
 	}
 }
 
-func (h *commonHandler) withFields(fields []Field, min bool) *commonHandler {
+func (h *commonHandler) withFields(ctx context.Context, fields []Field) *commonHandler {
 	// We are going to ignore empty groups, so if the entire slice consists of
 	// them, there is nothing to do.
 	if countEmptyGroups(fields) == len(fields) {
@@ -79,60 +63,34 @@ func (h *commonHandler) withFields(fields []Field, min bool) *commonHandler {
 	h2 := h.clone()
 	var state handleState
 	state = h2.newHandleState(buffer.NewNonCap(), false, h.attrSep())
-	//if min {
-	//	state = h2.newHandleState(buffer.NewMin(), false, h.attrSep())
-	//} else {
-	//	state = h2.newHandleState(buffer.New(), false, h.attrSep())
-	//}
 	defer state.free()
-	//pos := state.buf.Len()
-	//state
-	state.appendFields(context.Background(), "", fields, true)
-	//state.appendFields2(context.Background(), fields, true)
+	state.appendFields(ctx, fields, true, false)
 	return h2
 }
 
-func (h *commonHandler) withFields2(fields []Field, min bool) *commonHandler {
-	// We are going to ignore empty groups, so if the entire slice consists of
-	// them, there is nothing to do.
-	if countEmptyGroups(fields) == len(fields) {
-		return h
-	}
-	h2 := h.clone()
-	var state handleState
-	state = h2.newHandleState(buffer.NewNonCap(), false, h.attrSep())
-	//if min {
-	//	state = h2.newHandleState(buffer.NewMin(), false, h.attrSep())
-	//} else {
-	//	state = h2.newHandleState(buffer.New(), false, h.attrSep())
-	//}
-	defer state.free()
-	//pos := state.buf.Len()
-	//state
-	//state.appendFields(context.Background(), "", fields, true)
-	state.appendFields2(context.Background(), fields, true)
-	return h2
-}
-
-func (s *handleState) appendFields2(ctx context.Context, fields []Field, isPreformat bool) bool {
+func (s *handleState) appendFields(ctx context.Context, fields []Field, isPreformat bool, isGroup bool) bool {
 	nonEmpty := false
-	last := len(fields) - 1
-	for i, field := range fields {
-		if s.appendField(ctx, field, isPreformat, i == last) {
+	for _, field := range fields {
+		if s.appendField(ctx, field, isPreformat) {
 			nonEmpty = true
 		}
+	}
+	if isPreformat && !isGroup && s.buf.Len() > 0 {
+		s.h.preformattedAttrs = append(s.h.preformattedAttrs, preformattedAttr{
+			bytes: *s.buf,
+		})
 	}
 	return nonEmpty
 }
 
-func (s *handleState) appendField(ctx context.Context, field Field, isPreformat bool, isLast bool) bool {
+func (s *handleState) appendField(ctx context.Context, field Field, isPreformat bool) bool {
 	if rep := s.h.opts.Replacer; rep != nil && field.Value.Kind() != KindGroup {
 		var gs []string
 		if s.groups != nil {
 			gs = *s.groups
 		}
 		// a.Value is resolved before calling ReplaceAttr, so the user doesn't have to.
-		field = rep(gs, field)
+		field = rep(ctx, gs, field)
 	}
 	// Elide empty Attrs.
 	if field.isEmpty() {
@@ -146,23 +104,36 @@ func (s *handleState) appendField(ctx context.Context, field Field, isPreformat 
 				bytes:  *s.buf,
 				valuer: v.valuer(),
 			})
-
-			if !isLast {
-				s.buf = buffer.NewNonCap()
-			}
+			// new buffer
+			s.buf = buffer.NewNonCap()
 		} else {
 			s.appendValue(v.Resolve(ctx))
 		}
+		return true
 	}
 
 	if field.Value.Kind() == KindGroup {
+		fs := field.Value.group()
+		// Output only non-empty groups.
+		if len(fs) == 0 {
+			return false
+		}
+		// Inline a group with an empty key.
+		if field.Key != "" {
+			s.openGroup(field.Key)
+		}
 
+		s.appendFields(ctx, fs, isPreformat, true)
+
+		if field.Key != "" {
+			s.closeGroup(field.Key)
+		}
 	} else {
 		s.appendKey(field.Key)
 		s.appendValue(field.Value)
 	}
 
-	return false
+	return true
 }
 
 // attrSep returns the separator between attributes.
@@ -179,24 +150,41 @@ func (h *commonHandler) attrSep() string {
 type handleState struct {
 	h       *commonHandler
 	buf     *buffer.Buffer
-	freeBuf bool      // should buf be freed?
-	sep     string    // separator to write before next key
-	groups  *[]string // pool-allocated slice of active groups, for ReplaceAttr
+	freeBuf bool           // should buf be freed?
+	sep     string         // separator to write before next key
+	prefix  *buffer.Buffer // for text: key prefix
+	groups  *[]string      // pool-allocated slice of active groups, for ReplaceAttr
 }
 
+var groupPool = sync.Pool{New: func() any {
+	s := make([]string, 0, 10)
+	return &s
+}}
+
 func (h *commonHandler) newHandleState(buf *buffer.Buffer, freeBuf bool, sep string) handleState {
-	return handleState{
+	s := handleState{
 		h:       h,
 		buf:     buf,
-		sep:     sep,
 		freeBuf: freeBuf,
+		sep:     sep,
+		prefix:  buffer.New(),
 	}
+	// enable group
+	if h.opts.Replacer != nil {
+		s.groups = groupPool.Get().(*[]string)
+	}
+	return s
 }
 
 func (s *handleState) free() {
 	if s.freeBuf {
 		s.buf.Free()
 	}
+	if gs := s.groups; gs != nil {
+		*gs = (*gs)[:0]
+		groupPool.Put(gs)
+	}
+	s.prefix.Free()
 }
 
 // Separator for group names and keys.
@@ -205,33 +193,45 @@ const keyComponentSep = '.'
 // openGroup starts a new group of attributes
 // with the given name.
 func (s *handleState) openGroup(name string) {
-	if name == "" {
-		return
-	}
 	if s.h.json {
 		s.appendKey(name)
 		_ = s.buf.WriteByte('{')
 		s.sep = ""
+	} else {
+		_, _ = s.prefix.WriteString(name)
+		_ = s.prefix.WriteByte(keyComponentSep)
+	}
+	// Collect group names for ReplaceAttr.
+	if s.groups != nil {
+		*s.groups = append(*s.groups, name)
 	}
 }
 
 // closeGroup ends the group with the given name.
 func (s *handleState) closeGroup(name string) {
-	if name == "" {
-		return
-	}
 	if s.h.json {
 		_ = s.buf.WriteByte('}')
+	} else {
+		(*s.prefix) = (*s.prefix)[:len(*s.prefix)-len(name)-1 /* for keyComponentSep */]
 	}
 	s.sep = s.h.attrSep()
+	if s.groups != nil {
+		*s.groups = (*s.groups)[:len(*s.groups)-1]
+	}
 }
 
 func (s *handleState) appendKey(key string) {
 	_, _ = s.buf.WriteString(s.sep)
-	s.appendString(key)
 	if s.h.json {
+		s.appendString(key)
 		_ = s.buf.WriteByte(':')
 	} else {
+		if s.prefix != nil && len(*s.prefix) > 0 {
+			// TODO: optimize by avoiding allocation.
+			s.appendString(bytesToString(*s.prefix) + key)
+		} else {
+			s.appendString(key)
+		}
 		_ = s.buf.WriteByte('=')
 	}
 	s.sep = s.h.attrSep()
@@ -243,13 +243,12 @@ func (s *handleState) appendString(str string) {
 		*s.buf = appendEscapedJSONString(*s.buf, str)
 		_ = s.buf.WriteByte('"')
 	} else {
+		// text
 		if needsQuoting(str) {
 			*s.buf = strconv.AppendQuote(*s.buf, str)
 		} else {
 			_, _ = s.buf.WriteString(str)
 		}
-		//// text todo: needsQuoting
-		//_, _ = s.buf.WriteString(str)
 	}
 }
 
@@ -275,65 +274,6 @@ func needsQuoting(s string) bool {
 		i += size
 	}
 	return false
-}
-
-func (s *handleState) appendFields(ctx context.Context, group string, fields []Field, isPreformat bool) {
-	lastAttrIndex := len(fields) - 1
-	s.openGroup(group)
-	for i, a := range fields {
-		if a.isEmpty() {
-			continue
-		}
-		key := a.Key
-		if !s.h.json && group != "" {
-			key = group + "." + key
-		}
-		// Special case: Valuer.
-		if v := a.Value; v.Kind() == KindValuer {
-			if isPreformat {
-				if s.buf.Len() > 0 {
-					s.h.preformattedAttrs = append(s.h.preformattedAttrs, preformattedAttr{
-						bytes: *s.buf,
-					})
-
-					if i < lastAttrIndex {
-						// hasDynamic
-						s.buf = buffer.New()
-					}
-
-				}
-
-				s.h.preformattedAttrs = append(s.h.preformattedAttrs, preformattedAttr{
-					key:    key,
-					valuer: a.Value.valuer(),
-				})
-
-			} else {
-				s.appendKey(key)
-				s.appendValue(v.Resolve(ctx))
-			}
-			continue
-		}
-
-		if a.Value.Kind() == KindGroup {
-			groupValue := a.Value.Group()
-			if len(groupValue) == 0 {
-				continue
-			}
-			s.appendFields(ctx, key, a.Value.Group(), isPreformat)
-		} else {
-			s.appendKey(key)
-			s.appendValue(a.Value)
-		}
-	}
-	s.closeGroup(group)
-	if isPreformat && group == "" {
-		if s.buf.Len() > 0 {
-			s.h.preformattedAttrs = append(s.h.preformattedAttrs, preformattedAttr{
-				bytes: *s.buf,
-			})
-		}
-	}
 }
 
 func (s *handleState) appendValue(v Value) {
@@ -395,35 +335,28 @@ func (s *handleState) appendByte(c byte) {
 }
 
 func (s *handleState) appendPreformattedAttrs(ctx context.Context) {
-	if s.h.preformattedAttrs == nil {
+	if len(s.h.preformattedAttrs) == 0 {
 		return
 	}
-	prevBytes := false
 	for _, attr := range s.h.preformattedAttrs {
-		if attr.valuer != nil {
-			s.appendKey(attr.key)
-			s.appendValue(attr.valuer(ctx))
-			prevBytes = false
-		} else if len(attr.bytes) > 0 {
+		if len(attr.bytes) > 0 {
 			_, _ = s.buf.Write(attr.bytes)
-			if prevBytes {
-				s.sep = ""
-			}
-			prevBytes = true
+		}
+		if attr.valuer != nil {
+			s.appendValue(attr.valuer(ctx).Resolve(ctx))
 		}
 	}
-	s.sep = s.h.attrSep()
 }
 
-func (s *handleState) appendByAnyFields(ctx context.Context, kvs []any) {
+func (s *handleState) appendNonBuiltIns(ctx context.Context, kvs []any) {
 	var a Field
 	for len(kvs) > 0 {
 		a, kvs = kvsToField(kvs)
-		s.appendFields(ctx, "", []Field{a}, false)
+		s.appendField(ctx, a, false)
 	}
 }
 
-func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, msg string, fields ...any) error {
+func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, msg string, kvs ...any) error {
 	state := h.newHandleState(buffer.New(), true, "")
 	defer state.free()
 
@@ -431,27 +364,42 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 		state.appendByte('{')
 	}
 
-	//if len(h.name) > 0 {
-	//	_, _ = state.buf.WriteString(h.name)
-	//}
-
+	if !h.json && h.opts.Name != "" {
+		_, _ = state.buf.WriteString(h.opts.Name)
+		_, _ = state.buf.WriteString(" | ")
+	}
+	// Built-in attributes. They are not in a group.
+	stateGroups := state.groups
+	state.groups = nil // So ReplaceAttrs sees no groups instead of the pre groups.
+	rep := h.opts.Replacer
 	// level
+	levelStr := level.String()
+	if rep != nil {
+		rep(ctx, nil, String(LevelKey, levelStr))
+	}
 	if h.json {
 		state.appendKey(LevelKey)
-		state.appendString(level.String())
+		state.appendString(levelStr)
 	} else {
-		state.appendString(level.String())
+		state.appendString(levelStr)
 		state.sep = h.attrSep()
 	}
 
 	state.appendPreformattedAttrs(ctx)
+
 	// message
+	if rep != nil {
+		rep(ctx, nil, String(MessageKey, msg))
+	}
+
 	if msg != "" {
 		state.appendKey(MessageKey)
 		state.appendString(msg)
 	}
 
-	state.appendByAnyFields(ctx, fields)
+	state.groups = stateGroups // Restore groups passed to ReplaceAttrs.
+
+	state.appendNonBuiltIns(ctx, kvs)
 
 	if h.json {
 		state.appendByte('}')
@@ -459,8 +407,7 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 
 	state.appendByte('\n')
 
-	// Benchmark test
-	if w == nil || w == io.Discard || w == discard {
+	if w == nil || w == io.Discard || w == Discard {
 		return nil
 	}
 

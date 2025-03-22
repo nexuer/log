@@ -4,3 +4,8 @@ This structured logging library is developed with reference to Go's standard log
 ```shell
 go get github.com/nexuer/log
 ```
+
+## Performance
+After benchmarking, the overall performance is comparable to that of `slog`.
+
+[Benchmarks](./benchmarks/scenario_bench_test.go)

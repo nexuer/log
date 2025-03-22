@@ -2,9 +2,12 @@ package log
 
 import (
 	"errors"
-	"gopkg.in/natefinch/lumberjack.v2"
 	"io"
+
+	"gopkg.in/natefinch/lumberjack.v2"
 )
+
+var Discard = writerWrapper{Writer: io.Discard}
 
 type writerWrapper struct {
 	io.Writer
@@ -13,8 +16,6 @@ type writerWrapper struct {
 func (w writerWrapper) Close() error {
 	return nil
 }
-
-var discard = writerWrapper{Writer: io.Discard}
 
 // addWriteCloser converts an io.Writer to a WriteSyncer. It attempts to be
 // intelligent: if the concrete type of the io.Writer implements WriteSyncer,

@@ -17,18 +17,6 @@ var (
 )
 
 var (
-	// Sprint is used to concatenate log message components into a single string.
-	// It formats its arguments using the default behavior (fmt.Sprint).
-	// The caller can replace this function to customize the log message formatting.
-	Sprint func(a ...any) string = fmt.Sprint
-	// Sprintf is used to format log messages with a specific format string.
-	// It formats its arguments using the default behavior (fmt.Sprintf).
-	// The caller can replace this function to customize the format or behavior of the log messages.
-	Sprintf func(format string, a ...any) string = fmt.Sprintf
-)
-
-var (
-
 	// DefaultCaller is a Valuer that returns the file and line.
 	DefaultCaller = Caller(7)
 
@@ -63,9 +51,10 @@ func SetDefault(l *Logger) {
 func Default() *Logger { return defaultLogger.Load() }
 
 // InitManager init global manager
-func InitManager(name string, fields ...any) {
-	defaultManager.Store(NewManager(name, fields...))
-	SetDefault(M().Logger())
+func InitManager(name string, fields ...any) *Manager {
+	m := NewManager(name, fields...)
+	defaultManager.Store(m)
+	return m
 }
 
 func M() *Manager {

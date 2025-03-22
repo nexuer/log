@@ -28,10 +28,9 @@ func Json(opts ...*HandlerOptions) Handler {
 	}
 }
 
-func (j *jsonHandler) With(kvs ...any) Handler {
-	fields, ok := kvsToFieldSlice(kvs)
-	return &textHandler{
-		handler: j.handler.withFields(fields, ok),
+func (j *jsonHandler) WithFields(ctx context.Context, fields ...Field) Handler {
+	return &jsonHandler{
+		handler: j.handler.withFields(ctx, fields),
 	}
 }
 
@@ -55,6 +54,23 @@ func appendJSONValue(s *handleState, v Value) error {
 	switch v.Kind() {
 	case KindString:
 		s.appendString(v.str())
+	case KindSource:
+		if v.any != nil {
+			source := v.source()
+			_ = s.buf.WriteByte('{')
+			s.sep = ""
+			s.appendKey("function")
+			s.appendString(source.Function)
+			s.sep = s.h.attrSep()
+			s.appendKey("file")
+			s.appendString(source.File)
+			s.appendKey("line")
+			*s.buf = strconv.AppendInt(*s.buf, int64(source.Line), 10)
+			//s.appendString(strconv.Itoa(source.Line))
+			_ = s.buf.WriteByte('}')
+		} else {
+			_, _ = s.buf.WriteString("{}")
+		}
 	case KindInt64:
 		*s.buf = strconv.AppendInt(*s.buf, v.Int64(), 10)
 	case KindUint64:

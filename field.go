@@ -61,8 +61,7 @@ func Duration(key string, v time.Duration) Field {
 // key on a log line, or as the result of LogValue
 // in order to log a single value as multiple Attrs.
 func Group(key string, kvs ...any) Field {
-	fields, _ := kvsToFieldSlice(kvs)
-	return Field{key, GroupValue(fields...)}
+	return Field{key, GroupValue(kvsToFieldSlice(kvs)...)}
 }
 
 // Any returns an Attr for the supplied value.
@@ -73,22 +72,16 @@ func Any(key string, value any) Field {
 
 const badKey = "<BAD_KEY>"
 
-func kvsToFieldSlice(kvs []any) ([]Field, bool) {
+func kvsToFieldSlice(kvs []any) []Field {
 	var (
 		field  Field
 		fields []Field
 	)
-	hasDynamic := false
 	for len(kvs) > 0 {
 		field, kvs = kvsToField(kvs)
-		if field.Value.Kind() == KindValuer {
-			if !hasDynamic {
-				hasDynamic = true
-			}
-		}
 		fields = append(fields, field)
 	}
-	return fields, hasDynamic
+	return fields
 }
 
 // kvsToField turns a prefix of the nonempty args slice into an Attr

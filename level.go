@@ -7,7 +7,7 @@ import (
 )
 
 // Level is a logger level.
-type Level int8
+type Level int
 
 const (
 	LevelDebug Level = -4
@@ -16,6 +16,10 @@ const (
 	LevelError Level = 8
 	LevelFatal Level = 12
 )
+
+func (l Level) Enable(level Level) bool {
+	return level >= l
+}
 
 func (l Level) String() string {
 	str := func(base string, val Level) string {

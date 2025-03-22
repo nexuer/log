@@ -61,6 +61,7 @@ const (
 
 	// KindValuer Use KindValuer instead of slog.kindLogValuer
 	KindValuer
+	KindSource
 )
 
 var kindStrings = []string{
@@ -74,6 +75,7 @@ var kindStrings = []string{
 	"Uint64",
 	"Group",
 	"Valuer",
+	"Source",
 }
 
 func (k Kind) String() string {
@@ -182,6 +184,22 @@ func GroupValue(as ...Field) Value {
 	return Value{kind: KindGroup, num: uint64(len(as)), any: groupptr(unsafe.SliceData(as))}
 }
 
+type Source struct {
+	// Function is the package path-qualified function name containing the
+	// source line. If non-empty, this string uniquely identifies a single
+	// function in the program. This may be the empty string if not known.
+	Function string `json:"function"`
+	// File and Line are the file name and line number (1-based) of the source
+	// line. These may be the empty string and zero, respectively, if not known.
+	File string `json:"file"`
+	Line int    `json:"line"`
+}
+
+// SourceValue returns a [Value] for a [Source].
+func SourceValue(v *Source) Value {
+	return Value{kind: KindSource, any: v}
+}
+
 // countEmptyGroups returns the number of empty group values in its argument.
 func countEmptyGroups(as []Field) int {
 	n := 0
@@ -212,6 +230,8 @@ func AnyValue(v any) Value {
 	switch v := v.(type) {
 	case string:
 		return StringValue(v)
+	case *Source:
+		return SourceValue(v)
 	case int:
 		return IntValue(v)
 	case uint:
@@ -280,6 +300,8 @@ func (v Value) Any() any {
 		return v.duration()
 	case KindTime:
 		return v.time()
+	case KindSource:
+		return v.any
 	default:
 		panic(fmt.Sprintf("bad kind: %s", v.Kind()))
 	}
@@ -408,6 +430,18 @@ func (v Value) Valuer() Valuer {
 
 func (v Value) valuer() Valuer {
 	return v.any.(Valuer)
+}
+
+func (v Value) Source() *Source {
+	source, ok := v.any.(*Source)
+	if !ok {
+		panic(fmt.Sprintf("Value kind is %s, not %s", v.Kind(), KindSource))
+	}
+	return source
+}
+
+func (v Value) source() *Source {
+	return v.any.(*Source)
 }
 
 //////////////// Other
@@ -564,6 +598,18 @@ func withCallerDepthKey(ctx context.Context, depth int) context.Context {
 	return context.WithValue(ctx, callerDepthKey, depth)
 }
 
+func (s *Source) String() string {
+	var builder strings.Builder
+	if s.File != "" {
+		builder.WriteString(s.File)
+	}
+	if s.Line != 0 {
+		builder.WriteByte(':')
+		builder.WriteString(strconv.Itoa(s.Line))
+	}
+	return builder.String()
+}
+
 func Caller(depth int, full ...bool) Valuer {
 	fullFilename := false
 	if len(full) > 0 && full[0] {
@@ -576,15 +622,58 @@ func Caller(depth int, full ...bool) Valuer {
 				skip += extraDepth
 			}
 		}
-		_, file, line, _ := runtime.Caller(skip)
+
+		pc, file, line, _ := runtime.Caller(skip)
+		fn := runtime.FuncForPC(pc)
+		var fnName string
+		if fn != nil {
+			fnName = fn.Name()
+		}
 		if fullFilename {
-			return StringValue(file + ":" + strconv.Itoa(line))
+			return SourceValue(&Source{
+				Function: fnName,
+				File:     file,
+				Line:     line,
+			})
 		}
 		idx := strings.LastIndexByte(file, '/')
 		if idx == -1 {
-			return StringValue(file[idx+1:] + ":" + strconv.Itoa(line))
+			return SourceValue(&Source{
+				Function: fnName,
+				File:     file[idx+1:],
+				Line:     line,
+			})
 		}
 		idx = strings.LastIndexByte(file[:idx], '/')
-		return StringValue(file[idx+1:] + ":" + strconv.Itoa(line))
+		return SourceValue(&Source{
+			Function: fnName,
+			File:     file[idx+1:],
+			Line:     line,
+		})
 	}
 }
+
+//func Caller(depth int, full ...bool) Valuer {
+//	fullFilename := false
+//	if len(full) > 0 && full[0] {
+//		fullFilename = true
+//	}
+//	return func(ctx context.Context) Value {
+//		skip := depth
+//		if ctx != nil {
+//			if extraDepth, ok := ctx.Value(callerDepthKey).(int); ok && extraDepth > 0 {
+//				skip += extraDepth
+//			}
+//		}
+//		_, file, line, _ := runtime.Caller(skip)
+//		if fullFilename {
+//			return StringValue(file + ":" + strconv.Itoa(line))
+//		}
+//		idx := strings.LastIndexByte(file, '/')
+//		if idx == -1 {
+//			return StringValue(file[idx+1:] + ":" + strconv.Itoa(line))
+//		}
+//		idx = strings.LastIndexByte(file[:idx], '/')
+//		return StringValue(file[idx+1:] + ":" + strconv.Itoa(line))
+//	}
+//}

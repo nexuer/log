@@ -1,6 +1,7 @@
 package log
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -10,7 +11,6 @@ import (
 )
 
 func TestWriteCloser(t *testing.T) {
-	fmt.Printf("%+v\n", errors.New("1111111"))
 	fmt.Println(os.Stderr.Close(), os.Stdout.Close(), os.Stdin.Close())
 }
 
@@ -55,10 +55,62 @@ func TestReplacer(t *testing.T) {
 	sjl.Info("info", slog.Group("g", "key", "1"), "sep", "|", slog.Group("g2", "key", "2"))
 }
 
+func TestLoggerTextLevel(t *testing.T) {
+	l := New(os.Stderr).SetLevel(LevelDebug)
+	l.Debug("debug", " log")
+	l.Debugf("debugf %d %d", 1, 2)
+	l.DebugS("debugS", "key", "value")
+
+	l.Info("info", " log")
+	l.Infof("infof %d %d", 1, 2)
+	l.InfoS("infoS", "key", "value")
+
+	l.Warn("warn", " log")
+	l.Warnf("warnf %d %d", 1, 2)
+	l.WarnS("warnS", "key", "value")
+
+	l.Error("error", " log")
+	l.Errorf("errorf %d %d", 1, 2)
+	l.ErrorS(errors.New("error msg"), "errorS", "key", "value")
+
+	//l.Fatal("fatal", " log")
+	//l.Fatalf("fatalf %d %d", 1, 2)
+	l.FatalS(errors.New("error msg"), "fatalS", "key", "value")
+}
+
+func TestLoggerJsonLevel(t *testing.T) {
+	l := New(os.Stderr, Json()).SetLevel(LevelDebug)
+	l.Debug("debug", " log")
+	l.Debugf("debugf %d %d", 1, 2)
+	l.DebugS("debugS", "key", "value")
+
+	l.Info("info", " log")
+	l.Infof("infof %d %d", 1, 2)
+	l.InfoS("infoS", "key", "value")
+
+	l.Warn("warn", " log")
+	l.Warnf("warnf %d %d", 1, 2)
+	l.WarnS("warnS", "key", "value")
+
+	l.Error("error", " log")
+	l.Errorf("errorf %d %d", 1, 2)
+	l.ErrorS(errors.New("error msg"), "errorS", "key", "value")
+
+	//l.Fatal("fatal", " log")
+	//l.Fatalf("fatalf %d %d", 1, 2)
+	l.FatalS(errors.New("error msg"), "fatalS", "key", "value")
+}
+
 func TestLogger(t *testing.T) {
 	//Info("it is info log")
 
-	l := New(os.Stderr, Text(&HandlerOptions{Name: "http"})).With(
+	l := New(os.Stderr, Text(&HandlerOptions{
+		Name: "http",
+		Replacer: func(ctx context.Context, groups []string, field Field) Field {
+			fmt.Println(ctx, groups, field)
+			return field
+		},
+	})).With(
 		"ts", DefaultTimestamp,
 		"caller", DefaultCaller,
 		"key1", 10,
@@ -71,7 +123,7 @@ func TestLogger(t *testing.T) {
 		"key8", "value8",
 		Group("keys",
 			"key9", "value9",
-			"key10", "value10",
+			Group("key10", "value10", "value10"),
 		),
 	)
 	l.InfoS(fakeMessage,
@@ -89,7 +141,13 @@ func TestLogger(t *testing.T) {
 		),
 	)
 
-	jsonL := New(os.Stderr, Json(&HandlerOptions{Name: "grpc"})).With(
+	jsonL := New(os.Stderr, Json(&HandlerOptions{
+		Name: "grpc",
+		Replacer: func(ctx context.Context, groups []string, field Field) Field {
+			fmt.Println(ctx, groups, field)
+			return field
+		},
+	})).WithContext(context.TODO()).With(
 		"ts", DefaultTimestamp,
 		"caller", DefaultCaller,
 		"key1", 10,

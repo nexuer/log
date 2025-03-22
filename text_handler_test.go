@@ -12,15 +12,23 @@ var (
 	output      = io.Discard
 )
 
-func BenchmarkTextInfo(b *testing.B) {
+func BenchmarkText(b *testing.B) {
 	l := New(output)
 	b.ResetTimer()
 	b.ReportAllocs()
-	b.RunParallel(func(pb *testing.PB) {
-		for pb.Next() {
-			l.Info(fakeMessage)
-		}
+	b.Run("info", func(b *testing.B) {
+		l.Info(fakeMessage)
 	})
+	//b.Run("info", func(pb *testing.PB) {
+	//	for pb.Next() {
+	//		l.Info(fakeMessage)
+	//	}
+	//})
+	//b.Run("infof", func(pb *testing.PB) {
+	//	for pb.Next() {
+	//		l.Infof(fakeMessage)
+	//	}
+	//})
 }
 
 func BenchmarkTextInfof(b *testing.B) {
