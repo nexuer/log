@@ -65,6 +65,7 @@ func fakeZerologContext(c zerolog.Context) zerolog.Context {
 		Int("int", _tenInts[0]).
 		Ints("ints", _tenInts).
 		Str("string", _tenStrings[0]).
+		Str("string", _tenStrings[0]).
 		Strs("strings", _tenStrings).
 		Time("time", _tenTimes[0]).
 		Times("times", _tenTimes).

@@ -22,16 +22,31 @@ package benchmarks
 
 import (
 	"context"
+	"io"
 	"log"
 	"log/slog"
+	"os"
 	"testing"
 
+	"github.com/rs/zerolog"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 func TestSS(t *testing.T) {
-	logger := fakeZerologContext(newZerolog().With()).Logger()
-	logger.Info().Msg(getMessage(0))
+	logger := fakeZerologContext(zerolog.New(io.Discard).With()).Timestamp().Logger().Output(zerolog.ConsoleWriter{Out: os.Stderr})
+	logger.Info().Msg("test msg")
+
+	ec := zap.NewProductionEncoderConfig()
+	ec.EncodeDuration = zapcore.NanosDurationEncoder
+	ec.EncodeTime = zapcore.EpochNanosTimeEncoder
+	enc := zapcore.NewConsoleEncoder(ec)
+	zapLogger := zap.New(zapcore.NewCore(
+		enc,
+		os.Stderr,
+		zapcore.DebugLevel,
+	)).With(fakeFields()...)
+	zapLogger.Info("test msg")
 }
 
 func BenchmarkDisabledWithoutFields(b *testing.B) {
