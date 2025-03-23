@@ -19,6 +19,15 @@ func TestWrite(t *testing.T) {
 
 	w = New(os.Stdout, Json()).With(DefaultFields...)
 	w.Write([]byte("hello world"))
+
+	var wc io.WriteCloser
+
+	wc = New(os.Stdout).With(DefaultFields...)
+
+	wc.Write([]byte("hello world"))
+
+	wc = New(os.Stdout, Json()).With(DefaultFields...)
+	wc.Write([]byte("hello world"))
 }
 
 func TestLoggerWith(t *testing.T) {

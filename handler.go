@@ -365,9 +365,9 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 	}
 
 	if !h.json && h.opts.Name != "" {
+		_, _ = state.buf.WriteString("[")
 		_, _ = state.buf.WriteString(h.opts.Name)
-		_, _ = state.buf.WriteString(h.opts.Name)
-		_, _ = state.buf.WriteString(" | ")
+		_, _ = state.buf.WriteString("] ")
 	}
 	// Built-in attributes. They are not in a group.
 	stateGroups := state.groups
