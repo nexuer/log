@@ -91,11 +91,20 @@ func (l *Logger) SetLevel(level Level) *Logger {
 
 // SetOutput set the current io.Writer
 // Note: This is not concurrency-safe.
-func (l *Logger) SetOutput(w io.Writer) {
+func (l *Logger) SetOutput(w io.Writer) *Logger {
 	if l.Writer() == w {
-		return
+		return l
 	}
 	l.w = addWriteCloser(w)
+	return l
+}
+
+func (l *Logger) Write(p []byte) (n int, err error) {
+	err = l.log(LevelInfo, string(p), nil)
+	if err != nil {
+		return 0, err
+	}
+	return len(p), nil
 }
 
 // SetHandler set the current Handler

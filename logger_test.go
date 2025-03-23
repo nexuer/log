@@ -4,14 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"testing"
 	"time"
 )
 
-func TestWriteCloser(t *testing.T) {
-	fmt.Println(os.Stderr.Close(), os.Stdout.Close(), os.Stdin.Close())
+func TestWrite(t *testing.T) {
+	var w io.Writer
+	w = New(os.Stdout).With(DefaultFields...)
+
+	w.Write([]byte("hello world"))
+
+	w = New(os.Stdout, Json()).With(DefaultFields...)
+	w.Write([]byte("hello world"))
 }
 
 func TestLoggerWith(t *testing.T) {
