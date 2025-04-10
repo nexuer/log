@@ -48,7 +48,14 @@ func SetDefault(l *Logger) {
 }
 
 // Default returns the default [Logger].
-func Default() *Logger { return defaultLogger.Load() }
+func Default() *Logger {
+	logger := loadDefault()
+	return logger.WithContext(WithCallerDepth(logger.ctx, 0))
+}
+
+func loadDefault() *Logger {
+	return defaultLogger.Load()
+}
 
 // InitManager init global manager
 func InitManager(name string, fields ...any) *Manager {
@@ -70,80 +77,80 @@ func Close() error {
 	if m != nil {
 		return m.Close()
 	}
-	return Default().Close()
+	return loadDefault().Close()
 }
 
 // Debug logs a message at debug level.
 func Debug(args ...any) {
-	Default().Debug(args...)
+	loadDefault().Debug(args...)
 }
 
 // Debugf logs a message at debug level.
 func Debugf(format string, args ...any) {
-	Default().Debugf(format, args...)
+	loadDefault().Debugf(format, args...)
 }
 
 // DebugS logs a message at debug level with key vals.
 func DebugS(msg string, kvs ...any) {
-	Default().DebugS(msg, kvs...)
+	loadDefault().DebugS(msg, kvs...)
 }
 
 // Info logs a message at info level.
 func Info(args ...any) {
-	Default().Info(args...)
+	loadDefault().Info(args...)
 }
 
 // Infof logs a message at info level.
 func Infof(format string, args ...any) {
-	Default().Infof(format, args...)
+	loadDefault().Infof(format, args...)
 }
 
 // InfoS logs a message at info level with key vals.
 func InfoS(msg string, kvs ...any) {
-	Default().InfoS(msg, kvs...)
+	loadDefault().InfoS(msg, kvs...)
 }
 
 // Warn logs a message at warn level.
 func Warn(args ...any) {
-	Default().Warn(args...)
+	loadDefault().Warn(args...)
 }
 
 // Warnf logs a message at warn level.
 func Warnf(format string, args ...any) {
-	Default().Warnf(format, args...)
+	loadDefault().Warnf(format, args...)
 }
 
 // WarnS logs a message at warn level with key vals.
 func WarnS(msg string, kvs ...any) {
-	Default().WarnS(msg, kvs...)
+	loadDefault().WarnS(msg, kvs...)
 }
 
 // Error logs a message at error level.
 func Error(args ...any) {
-	Default().Error(args...)
+	loadDefault().Error(args...)
 }
 
 // Errorf logs a message at error level.
 func Errorf(format string, args ...any) {
-	Default().Errorf(format, args...)
+	loadDefault().Errorf(format, args...)
 }
 
 // ErrorS logs a message at error level with key vals.
 func ErrorS(err error, msg string, kvs ...any) {
-	Default().ErrorS(err, msg, kvs...)
+	loadDefault().ErrorS(err, msg, kvs...)
 }
 
 // Fatal logs a message at fatal level.
 func Fatal(args ...any) {
-	Default().Fatal(args...)
+	loadDefault().Fatal(args...)
 }
 
 // Fatalf logs a message at fatal level.
 func Fatalf(format string, args ...any) {
-	Default().Fatalf(format, args...)
+	loadDefault().Fatalf(format, args...)
 }
 
 // FatalS logs a message at fatal level with key vals.
 func FatalS(err error, msg string, kvs ...any) {
-	Default().FatalS(err, msg, kvs...)
+	loadDefault().FatalS(err, msg, kvs...)
 }

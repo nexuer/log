@@ -11,6 +11,7 @@ func TestInitManager(t *testing.T) {
 	logger := New(os.Stderr).With(DefaultFields...)
 	logger.Info("hello world")
 	Info("global logger: hello world")
+	Default().Info("default logger: hello world")
 	SetDefault(logger)
 	Info("new global logger: hello world")
 
