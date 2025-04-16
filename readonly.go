@@ -29,20 +29,12 @@ func (r *Readonly) Debugf(format string, args ...any) {
 	r.logger.Debugf(format, args...)
 }
 
-func (r *Readonly) DebugS(msg string, kvs ...any) {
-	r.logger.DebugS(msg, kvs...)
-}
-
 func (r *Readonly) Info(args ...any) {
 	r.logger.Info(args...)
 }
 
 func (r *Readonly) Infof(format string, args ...any) {
 	r.logger.Infof(format, args...)
-}
-
-func (r *Readonly) InfoS(msg string, kvs ...any) {
-	r.logger.InfoS(msg, kvs...)
 }
 
 func (r *Readonly) Warn(args ...any) {
@@ -53,20 +45,12 @@ func (r *Readonly) Warnf(format string, args ...any) {
 	r.logger.Warnf(format, args...)
 }
 
-func (r *Readonly) WarnS(msg string, kvs ...any) {
-	r.logger.WarnS(msg, kvs...)
-}
-
 func (r *Readonly) Error(args ...any) {
 	r.logger.Error(args...)
 }
 
 func (r *Readonly) Errorf(format string, args ...any) {
 	r.logger.Errorf(format, args...)
-}
-
-func (r *Readonly) ErrorS(err error, msg string, kvs ...any) {
-	r.logger.ErrorS(err, msg, kvs...)
 }
 
 func (r *Readonly) Write(p []byte) (int, error) {
