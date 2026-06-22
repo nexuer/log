@@ -2,6 +2,7 @@ package log
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"testing"
@@ -70,8 +71,10 @@ func TestMergeConfig(t *testing.T) {
 	dirFlag = "dir"
 	maxSizeFlag = 256
 	maxBackupsFlag = 5
-	flag := false
-	compressFlag = &flag
+	compressFlag = optionalBool{
+		set:   true,
+		value: false,
+	}
 	cfg = mergeConfig(Config{
 		Format: JsonFormat,
 		Level:  LevelDebug,
@@ -87,4 +90,15 @@ func TestMergeConfig(t *testing.T) {
 		},
 	})
 	fmt.Printf("flag: %+v\n", cfg)
+}
+
+func TestAddFlagsDoesNotPanic(t *testing.T) {
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("AddFlags panicked: %v", r)
+		}
+	}()
+
+	AddFlags(flag.NewFlagSet("log-test", flag.ContinueOnError))
 }

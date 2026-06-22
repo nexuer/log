@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -55,6 +56,29 @@ var defaultCfg = Config{
 	},
 }
 
+type optionalBool struct {
+	value bool
+	set   bool
+}
+
+func (b *optionalBool) Set(s string) error {
+	v, err := strconv.ParseBool(s)
+	if err != nil {
+		return err
+	}
+	b.value = v
+	b.set = true
+	return nil
+}
+
+func (b *optionalBool) String() string {
+	return strconv.FormatBool(b.value)
+}
+
+func (b *optionalBool) IsBoolFlag() bool {
+	return true
+}
+
 var (
 	levelFlag      string
 	outputFlag     string
@@ -62,7 +86,7 @@ var (
 	formatFlag     string
 	maxSizeFlag    int64
 	maxBackupsFlag int64
-	compressFlag   *bool
+	compressFlag   optionalBool
 )
 
 func AddFlags(fs *flag.FlagSet) {
@@ -81,9 +105,8 @@ func AddFlags(fs *flag.FlagSet) {
 	fs.Int64Var(&maxBackupsFlag, "log-max-backups", 0,
 		fmt.Sprintf(`Maximum number of log file backups to retain, 0 means unlimited (default %d)`,
 			defaultCfg.File.Backups))
-	fs.BoolVar(compressFlag, "log-compress", defaultCfg.File.Compress,
-		fmt.Sprintf(`Enable gzip compression for rotated log files (default %t)`,
-			defaultCfg.File.Compress))
+	fs.Var(&compressFlag, "log-compress", fmt.Sprintf(`Enable gzip compression for rotated log files (default %t)`,
+		defaultCfg.File.Compress))
 }
 
 // mergeString
@@ -119,9 +142,7 @@ func mergeConfig(config ...Config) Config {
 		mergeInt(&finalCfg.File.Size, cfg.File.Size)
 		mergeInt(&finalCfg.File.Backups, cfg.File.Backups)
 
-		if cfg.File.Compress {
-			finalCfg.File.Compress = true
-		}
+		finalCfg.File.Compress = cfg.File.Compress
 	}
 
 	// Apply priority flags
@@ -153,8 +174,8 @@ func mergeConfig(config ...Config) Config {
 	mergeInt(&finalCfg.File.Size, maxSizeFlag)
 	mergeInt(&finalCfg.File.Backups, maxBackupsFlag)
 
-	if compressFlag != nil {
-		finalCfg.File.Compress = *compressFlag
+	if compressFlag.set {
+		finalCfg.File.Compress = compressFlag.value
 	}
 
 	return finalCfg
@@ -170,7 +191,7 @@ type Manager struct {
 	name   string
 	main   *logChannel
 	others map[string]*logChannel
-	mu     sync.Mutex
+	mu     sync.RWMutex
 }
 
 func NewManager(name string, kvs ...any) *Manager {
@@ -210,6 +231,7 @@ func (m *Manager) visitAll(fn func(name string, l *Logger, fields []Field)) {
 func (m *Manager) Apply(cfg Config) Config {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
 	m.cfg = mergeConfig(cfg)
 
 	m.visitAll(func(name string, l *Logger, fields []Field) {
@@ -265,16 +287,15 @@ func (m *Manager) writer(name string, l *Logger) (io.Writer, string) {
 
 func (m *Manager) initLogger(name string, main bool, fields ...Field) *Logger {
 	l := New(os.Stderr)
-
 	m.set(name, l, fields)
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	if main {
 		m.main.logger = l
 		return l
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.others[name] = &logChannel{
 		fields: fields,
 		logger: l,
@@ -282,14 +303,23 @@ func (m *Manager) initLogger(name string, main bool, fields ...Field) *Logger {
 	return l
 }
 
+func (m *Manager) getOthers(name string) (*logChannel, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	l, ok := m.others[name]
+	return l, ok
+}
+
 func (m *Manager) Add(name string, kvs ...any) (*Logger, error) {
 	if name == m.name {
 		return nil, fmt.Errorf(`log: %q logger already exists`, name)
 	}
-	if _, ok := m.others[name]; ok {
+	if _, ok := m.getOthers(name); ok {
 		return nil, fmt.Errorf(`log: %q logger already exists`, name)
 	}
-	return m.initLogger(name, false, kvsToFieldSlice(kvs)...), nil
+	fields := kvsToFieldSlice(kvs)
+
+	return m.initLogger(name, false, fields...), nil
 }
 
 func (m *Manager) AddWithSuffix(suffix string, kvs ...any) (*Logger, error) {
@@ -301,6 +331,9 @@ func (m *Manager) isMain(name string) bool {
 }
 
 func (m *Manager) Logger(name ...string) *Logger {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	if len(name) == 0 || m.isMain(name[0]) {
 		return m.main.logger
 	}
@@ -313,6 +346,9 @@ func (m *Manager) Logger(name ...string) *Logger {
 }
 
 func (m *Manager) Close() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	var errs []error
 	m.visitAll(func(name string, l *Logger, fields []Field) {
 		if err := l.Close(); err != nil && !errors.Is(err, os.ErrClosed) {

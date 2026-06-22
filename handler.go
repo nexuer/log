@@ -21,7 +21,9 @@ type preformattedAttr struct {
 }
 
 type HandlerOptions struct {
-	Name     string
+	Name string
+	// Replacer can transform user fields. Built-in fields level and msg are passed
+	// to Replacer for observation only; returned replacements are ignored.
 	Replacer Replacer
 }
 
@@ -376,6 +378,7 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 	// level
 	levelStr := level.String()
 	if rep != nil {
+		// ignore replace level
 		rep(ctx, nil, String(LevelKey, levelStr))
 	}
 	if h.json {
@@ -388,7 +391,7 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 
 	state.appendPreformattedAttrs(ctx)
 
-	// message
+	// ignore replace message
 	if rep != nil {
 		rep(ctx, nil, String(MessageKey, msg))
 	}

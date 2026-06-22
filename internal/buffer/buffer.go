@@ -16,7 +16,8 @@ var bufPool = sync.Pool{
 	},
 }
 
-// Having an initial size gives a dramatic speedup.
+// nonCapBufPool is used where the caller wants pooled buffer headers without
+// retaining a preallocated backing array.
 var nonCapBufPool = sync.Pool{
 	New: func() any {
 		b := make([]byte, 0)
