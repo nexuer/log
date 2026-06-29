@@ -896,7 +896,7 @@ func BenchmarkAddingFields(b *testing.B) {
 			}
 		})
 	})
-	b.Run("NexuerLog.hsaValuer", func(b *testing.B) {
+	b.Run("NexuerLog.hasValuer", func(b *testing.B) {
 		logger := newNexuerLogger()
 		b.ResetTimer()
 		b.ReportAllocs()
@@ -1033,6 +1033,50 @@ func BenchmarkAddingFields(b *testing.B) {
 		b.RunParallel(func(pb *testing.PB) {
 			for pb.Next() {
 				logger.LogAttrs(context.Background(), slog.LevelInfo, getMessage(0), fakeSlogFields()...)
+			}
+		})
+	})
+}
+
+func BenchmarkNexuerTextHandler(b *testing.B) {
+	b.Logf("NexuerLog text handler scenarios. JSON handler is used by the cross-library benchmarks.")
+	b.Run("DisabledWithoutFields/InfoS", func(b *testing.B) {
+		logger := newDisabledNexuerTextLogger()
+		b.ResetTimer()
+		b.ReportAllocs()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				logger.InfoS(getMessage(0))
+			}
+		})
+	})
+	b.Run("WithoutFields/InfoS", func(b *testing.B) {
+		logger := newNexuerTextLogger()
+		b.ResetTimer()
+		b.ReportAllocs()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				logger.InfoS(getMessage(0))
+			}
+		})
+	})
+	b.Run("AccumulatedContext/InfoS", func(b *testing.B) {
+		logger := newNexuerTextLogger().With(fakeNexuerLogKvs()...)
+		b.ResetTimer()
+		b.ReportAllocs()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				logger.InfoS(getMessage(0))
+			}
+		})
+	})
+	b.Run("AddingFields/InfoS", func(b *testing.B) {
+		logger := newNexuerTextLogger()
+		b.ResetTimer()
+		b.ReportAllocs()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				logger.InfoS(getMessage(0), fakeNexuerLogKvs()...)
 			}
 		})
 	})

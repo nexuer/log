@@ -70,6 +70,11 @@ func Any(key string, value any) Field {
 	return Field{key, AnyValue(value)}
 }
 
+// Fields converts key-value pairs to Fields using the same rules as Logger.With.
+func Fields(kvs ...any) []Field {
+	return kvsToFieldSlice(kvs)
+}
+
 const badKey = "<BAD_KEY>"
 
 func kvsToFieldSlice(kvs []any) []Field {

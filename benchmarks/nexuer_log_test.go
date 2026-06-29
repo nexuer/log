@@ -10,8 +10,16 @@ func newNexuerLogger() *log.Logger {
 	return log.New(io.Discard, log.Json())
 }
 
+func newNexuerTextLogger() *log.Logger {
+	return log.New(io.Discard, log.Text())
+}
+
 func newDisabledNexuerLogger() *log.Logger {
 	return log.New(io.Discard, log.Json()).SetLevel(log.LevelError)
+}
+
+func newDisabledNexuerTextLogger() *log.Logger {
+	return log.New(io.Discard, log.Text()).SetLevel(log.LevelError)
 }
 
 func fakeNexuerLogKvs(hasValuer ...bool) []any {

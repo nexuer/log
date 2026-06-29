@@ -12,7 +12,7 @@ type Readonly struct {
 // If log is nil, it uses a default Logger from Default().
 func NewReadonly(log *Logger) *Readonly {
 	if log == nil {
-		log = loadDefault()
+		log = defaultLogger.Load()
 	} else {
 		log = log.WithContext(WithCallerDepth(log.ctx, 1))
 	}
