@@ -8,8 +8,8 @@ import (
 	"github.com/nexuer/log"
 )
 
-func TestNewReadonly(t *testing.T) {
-	l := log.NewReadonly(nil)
+func TestNewPrinter(t *testing.T) {
+	l := log.NewPrinter(nil)
 
 	l.Info("hello world")
 
@@ -19,6 +19,6 @@ func TestNewReadonly(t *testing.T) {
 		//_ = z
 	}
 
-	l = log.NewReadonly(log.New(os.Stderr, log.Text()).With(log.DefaultFields...))
+	l = log.NewPrinter(log.New(os.Stderr, log.Text()).With(log.DefaultFields...))
 	l.Info("hello world")
 }
