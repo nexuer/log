@@ -176,16 +176,16 @@ type entry struct {
 }
 
 func (e *entry) apply(name string, cfg *config) {
+	e.logger.SetLevel(*cfg.Level)
 	h := cfg.handler(name)
 	if len(cfg.Fields) > 0 {
 		h = h.WithFields(e.logger.Context(), cfg.Fields...)
 	}
+	e.logger.SetHandler(h)
 	w, newPath := cfg.writer(name, e.logger.Writer())
 	if newPath != "" {
-		e.logger.Infof("redirecting log output to file %q", newPath)
+		e.logger.Infof("log output redirected to %s", newPath)
 	}
-	e.logger.SetLevel(*cfg.Level)
-	e.logger.SetHandler(h)
 	e.logger.SetOutput(w)
 	e.printer = log.NewPrinter(e.logger)
 }
