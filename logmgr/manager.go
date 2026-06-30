@@ -2,7 +2,6 @@ package logmgr
 
 import (
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"sort"
@@ -16,19 +15,14 @@ type Manager struct {
 	mu *sync.RWMutex
 
 	name   string
-	flags  *flags
 	scopes map[string]*Scope
 }
 
 // newManager creates a Manager with a default scope named after name.
 func newManager(name string, opts ...Option) *Manager {
 	m := &Manager{
-		name: name,
-		mu:   new(sync.RWMutex),
-		flags: &flags{
-			config: new(config),
-			scopes: make(map[string]*config),
-		},
+		name:   name,
+		mu:     new(sync.RWMutex),
 		scopes: make(map[string]*Scope),
 	}
 	// add default scope
@@ -42,9 +36,9 @@ func (m *Manager) isDefaultScope(name string) bool {
 
 func (m *Manager) flagsConfig(name string) *config {
 	if m.isDefaultScope(name) {
-		return m.flags.config
+		return defaultFlags.config
 	}
-	return m.flags.scopes[name]
+	return defaultFlags.scopes[name]
 }
 
 func (m *Manager) addScope(name string, opts ...Option) *Scope {
@@ -72,11 +66,6 @@ func (m *Manager) getScope(name string) (*Scope, bool) {
 	defer m.mu.RUnlock()
 	scope, ok := m.scopes[name]
 	return scope, ok
-}
-
-// AddFlags registers log manager flags on fs.
-func (m *Manager) AddFlags(fs *flag.FlagSet) {
-	m.flags.AddFlags(fs)
 }
 
 // Add registers a named printer in the default scope.

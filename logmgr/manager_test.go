@@ -75,9 +75,8 @@ func TestDefaultLoggerFollowsDefaultScope(t *testing.T) {
 }
 
 func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
-	m := logmgr.Init("server")
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	m.AddFlags(fs)
+	logmgr.AddFlags(fs)
 
 	if err := fs.Parse([]string{
 		"--log-level=error",
@@ -92,6 +91,7 @@ func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
 		t.Fatalf("parse flags: %v", err)
 	}
 
+	m := logmgr.Init("server")
 	server := m.MustAdd("worker")
 	db := m.MustAddScope("db")
 	mysql := db.MustAdd("mysql")

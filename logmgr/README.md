@@ -28,7 +28,7 @@ func main() {
 	m := logmgr.Init("server",
 		logmgr.WithFields(log.String("service", "api")),
 	)
-	m.AddFlags(flag.CommandLine)
+	logmgr.AddFlags(flag.CommandLine)
 	flag.Parse()
 
 	m.MustAdd("worker")
@@ -158,12 +158,14 @@ logmgr.WithReplacer(replacer)
 
 ## Command-line Overrides
 
-Register flags after `Init` and before `flag.Parse`.
+Register and parse flags before `Init`. Parsed values are applied when the
+manager or scope is created.
 
 ```go
-m := logmgr.Init("server")
-m.AddFlags(flag.CommandLine)
+logmgr.AddFlags(flag.CommandLine)
 flag.Parse()
+
+m := logmgr.Init("server")
 ```
 
 Default-scope flags:

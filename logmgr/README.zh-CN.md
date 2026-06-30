@@ -27,7 +27,7 @@ func main() {
 	m := logmgr.Init("server",
 		logmgr.WithFields(log.String("service", "api")),
 	)
-	m.AddFlags(flag.CommandLine)
+	logmgr.AddFlags(flag.CommandLine)
 	flag.Parse()
 
 	m.MustAdd("worker")
@@ -153,12 +153,13 @@ logmgr.WithReplacer(replacer)
 
 ## 命令行覆盖
 
-在 `Init` 之后、`flag.Parse` 之前注册 flags：
+在 `Init` 之前注册并解析 flags。解析后的值会在 manager 或 scope 创建时生效。
 
 ```go
-m := logmgr.Init("server")
-m.AddFlags(flag.CommandLine)
+logmgr.AddFlags(flag.CommandLine)
 flag.Parse()
+
+m := logmgr.Init("server")
 ```
 
 默认 scope 配置：

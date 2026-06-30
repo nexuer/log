@@ -36,6 +36,13 @@ type flags struct {
 	scopes map[string]*config
 }
 
+func newFlags() *flags {
+	return &flags{
+		config: new(config),
+		scopes: make(map[string]*config),
+	}
+}
+
 func parseBool(s string) (bool, error) {
 	switch strings.ToLower(s) {
 	case "1", "t", "true", "y", "yes", "on":
