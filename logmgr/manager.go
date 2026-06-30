@@ -71,12 +71,12 @@ func (m *Manager) getScope(name string) (*Scope, bool) {
 // Add registers a named printer in the default scope.
 //
 // It returns an error if the printer already exists.
-func (m *Manager) Add(name string) (*log.Printer, error) {
+func (m *Manager) Add(name string) (log.Printer, error) {
 	return m.DefaultScope().Add(name)
 }
 
 // MustAdd is like Add but panics if the printer already exists.
-func (m *Manager) MustAdd(name string) *log.Printer {
+func (m *Manager) MustAdd(name string) log.Printer {
 	return m.DefaultScope().MustAdd(name)
 }
 
@@ -119,7 +119,7 @@ func (m *Manager) Apply(opts ...Option) {
 //
 // With no name, it returns the default printer for the default scope. With a
 // name, it returns a printer previously registered by Add or MustAdd.
-func (m *Manager) Printer(name ...string) *log.Printer {
+func (m *Manager) Printer(name ...string) log.Printer {
 	return m.Scope(m.name).Printer(name...)
 }
 
@@ -172,7 +172,7 @@ func (m *Manager) Close() error {
 
 type entry struct {
 	logger  *log.Logger
-	printer *log.Printer
+	printer log.Printer
 }
 
 func (e *entry) apply(name string, cfg *config) {
@@ -236,7 +236,7 @@ func (s *Scope) apply(force bool, opts ...Option) {
 //
 // With no name, it returns the scope's default printer. With a name, it returns
 // a printer previously registered by Add or MustAdd.
-func (s *Scope) Printer(name ...string) *log.Printer {
+func (s *Scope) Printer(name ...string) log.Printer {
 	fullName := s.name
 
 	if len(name) > 0 {
@@ -266,7 +266,7 @@ func (s *Scope) getEntry(name string) (*entry, bool) {
 }
 
 // MustAdd is like Add but panics if the printer already exists.
-func (s *Scope) MustAdd(name string) *log.Printer {
+func (s *Scope) MustAdd(name string) log.Printer {
 	p, err := s.Add(name)
 	if err != nil {
 		panic(err)
@@ -277,7 +277,7 @@ func (s *Scope) MustAdd(name string) *log.Printer {
 // Add registers a named printer in the scope.
 //
 // It returns an error if the printer already exists.
-func (s *Scope) Add(name string) (*log.Printer, error) {
+func (s *Scope) Add(name string) (log.Printer, error) {
 	if name == "" {
 		return nil, fmt.Errorf("logmgr: printer name is empty in scope %q", s.name)
 	}
