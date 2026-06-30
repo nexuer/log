@@ -34,11 +34,11 @@ func (m *Manager) isDefaultScope(name string) bool {
 	return m.name == name
 }
 
-func (m *Manager) flagsConfig(name string) *config {
+func (m *Manager) flagConfigs(name string) []*config {
 	if m.isDefaultScope(name) {
-		return defaultFlags.config
+		return []*config{defaultFlags.config, defaultFlags.set[""], defaultFlags.set[name]}
 	}
-	return defaultFlags.scopes[name]
+	return []*config{defaultFlags.set[name]}
 }
 
 func (m *Manager) addScope(name string, opts ...Option) *Scope {
@@ -52,7 +52,7 @@ func (m *Manager) addScopeLocked(name string, opts ...Option) *Scope {
 	scope := &Scope{
 		name:    name,
 		manager: m,
-		config:  newConfig(opts, m.flagsConfig(name)),
+		config:  newConfig(opts, m.flagConfigs(name)...),
 		entries: make(map[string]*entry),
 	}
 
@@ -84,6 +84,10 @@ func (m *Manager) MustAdd(name string) *log.Printer {
 //
 // It returns an error if the scope already exists.
 func (m *Manager) AddScope(name string, opts ...Option) (*Scope, error) {
+	if name == "" {
+		return nil, errors.New("logmgr: scope name is empty")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -220,7 +224,7 @@ func (s *Scope) apply(force bool, opts ...Option) {
 	s.locker().Lock()
 	defer s.locker().Unlock()
 	// new config
-	s.config = newConfig(opts, s.manager.flagsConfig(s.name))
+	s.config = newConfig(opts, s.manager.flagConfigs(s.name)...)
 
 	for k, v := range s.entries {
 		v.apply(k, s.config)
@@ -274,6 +278,10 @@ func (s *Scope) MustAdd(name string) *log.Printer {
 //
 // It returns an error if the printer already exists.
 func (s *Scope) Add(name string) (*log.Printer, error) {
+	if name == "" {
+		return nil, fmt.Errorf("logmgr: printer name is empty in scope %q", s.name)
+	}
+
 	s.locker().Lock()
 	defer s.locker().Unlock()
 

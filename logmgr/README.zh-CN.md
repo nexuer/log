@@ -61,8 +61,8 @@ func main() {
 
 ## 单例 Manager
 
-`Init` 安装单例 manager，并返回这个 manager。`M()` 返回当前单例 manager；如果还没有调用
-`Init`，`M()` 会 panic。
+`Init` 安装单例 manager，并返回这个 manager。`name` 是默认 scope 名，不能为空。`M()`
+返回当前单例 manager；如果还没有调用 `Init`，`M()` 会 panic。
 
 ```go
 m := logmgr.Init("server")
@@ -122,9 +122,10 @@ if _, err := logmgr.M().Add("worker"); err != nil {
 
 ## 配置
 
-最终配置由默认值、代码中的 option 和命令行 flag 合并得到。`--log-level`、
-`--log-format` 这类 flag 作用于默认 scope；`--log-scope=db.level=warn` 这类 flag
-作用于指定的命名 scope，并在该 scope 创建时覆盖对应的代码 option。
+最终配置由默认值、代码中的 option、命令行 flag 和 `--log-set` 合并得到。`--log-level`、
+`--log-format` 这类 flag 作用于默认 scope。`--log-set` 的优先级最高：`key=value`
+作用于默认 scope，`scope.key=value` 作用于指定的命名 scope。默认 scope 本身也有名字，
+因此当默认 scope 名为 `server` 时，`server.level=debug` 也会作用于默认 scope。
 
 `Apply` 会重新计算一个 scope 的最终配置，并应用到这个 scope 已创建的 printer 上，适合在
 运行时调整 level、format、output、fields 或 replacer。空的 `Apply()` 不会产生任何效果。
@@ -174,16 +175,19 @@ m := logmgr.Init("server")
 --log-file-compress=false
 ```
 
-命名 scope 配置：
+动态覆盖配置：
 
 ```sh
---log-scope=db.level=warn
---log-scope=db.format=json
---log-scope=db.output=file
---log-scope=db.file-dir=log/db
---log-scope=db.file-size=256
---log-scope=db.file-backups=5
---log-scope=db.file-compress=false
+--log-set=level=debug
+--log-set=server.level=warn
+--log-set=db.level=warn
+--log-set=db.format=json
+--log-set=db.output=file
+--log-set=db.file-dir=log/db
+--log-set=db.file-size=256
+--log-set=db.file-backups=5
+--log-set=db.file-compress=false
 ```
 
-scope flag 使用 `scope.key=value`，因此可以在代码注册 scope 之前通过命令行提前配置。
+`--log-set=key=value` 配置默认 scope；`--log-set=scope.key=value` 可以在命名 scope
+注册到代码之前提前配置它。

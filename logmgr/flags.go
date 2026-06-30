@@ -46,13 +46,13 @@ func (v boolFlagValue) IsBoolFlag() bool {
 
 type flags struct {
 	config *config
-	scopes map[string]*config
+	set    map[string]*config
 }
 
 func newFlags() *flags {
 	return &flags{
 		config: new(config),
-		scopes: make(map[string]*config),
+		set:    make(map[string]*config),
 	}
 }
 
@@ -67,7 +67,7 @@ func parseBool(s string) (bool, error) {
 	}
 }
 
-// AddFlags registers global log flags and dynamic scope flags.
+// AddFlags registers global log flags and dynamic log-set flags.
 func (f *flags) AddFlags(fs *flag.FlagSet) {
 	if f.config == nil {
 		f.config = &config{}
@@ -80,7 +80,8 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 			},
 		},
 		"log-level",
-		fmt.Sprintf(`Set log `+"`level`"+`. One of: debug, info, warn, error, fatal (default "%s")`, defaultLevel),
+		fmt.Sprintf("Set log `level`. One of: debug, info, warn, error, fatal (default %q)",
+			strings.ToLower(defaultLevel.String())),
 	)
 	fs.Var(
 		flagValue{
@@ -90,7 +91,7 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 			},
 		},
 		"log-output",
-		fmt.Sprintf(`Set log `+"`output`"+`. One of: stderr, stdout, file (default "%s")`, defaultOutput),
+		fmt.Sprintf("Set log `output`. One of: stderr, stdout, file (default %q)", defaultOutput),
 	)
 	fs.Var(
 		flagValue{
@@ -110,7 +111,7 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 			},
 		},
 		"log-format",
-		fmt.Sprintf(`Set log `+"`format`"+`. One of: text, json (default "%s")`, defaultFormat),
+		fmt.Sprintf("Set log `format`. One of: text, json (default %q)", defaultFormat),
 	)
 	fs.Var(
 		flagValue{
@@ -152,36 +153,40 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 	)
 	fs.Var(
 		flagValue{
-			typ: "scope.key=value",
+			typ: "key=value",
 			set: func(s string) error {
-				scope, key, value, err := splitScopeFlag(s)
+				scope, key, value, err := splitSetFlag(s)
 				if err != nil {
 					return err
 				}
-				cfg := f.scopes[scope]
+				cfg := f.set[scope]
 				if cfg == nil {
 					cfg = &config{}
 				}
 				if err := parseConfigField(cfg, key, value); err != nil {
-					return fmt.Errorf("invalid log-scope %q: %w", s, err)
+					return fmt.Errorf("invalid log-set %q: %w", s, err)
 				}
-				f.scopes[scope] = cfg
+				f.set[scope] = cfg
 				return nil
 			},
 		},
-		"log-scope",
-		"Set scope log config `scope.key=value`. Example: --log-scope=db.level=warn",
+		"log-set",
+		"Set log config `key=value` or `scope.key=value`. Example: --log-set=db.level=warn",
 	)
 }
 
-func splitScopeFlag(raw string) (scope, key, value string, err error) {
+func splitSetFlag(raw string) (scope, key, value string, err error) {
 	left, value, ok := strings.Cut(raw, "=")
 	if !ok {
 		return "", "", "", fmt.Errorf("missing '='")
 	}
 	scope, key, ok = strings.Cut(left, ".")
-	if !ok || scope == "" || key == "" {
-		return "", "", "", fmt.Errorf("want scope.key=value")
+	if !ok {
+		key = scope
+		scope = ""
+	}
+	if key == "" {
+		return "", "", "", fmt.Errorf("want key=value or scope.key=value")
 	}
 	return scope, key, value, nil
 }

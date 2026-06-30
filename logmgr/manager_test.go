@@ -87,8 +87,8 @@ func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
 		"--log-file-size=128",
 		"--log-file-backups=3",
 		"--log-file-compress=true",
-		"--log-scope=db.level=debug",
-		"--log-scope=db.file-dir=log/db",
+		"--log-set=db.level=debug",
+		"--log-set=db.file-dir=log/db",
 	}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
@@ -101,6 +101,26 @@ func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
 	server.Info("filtered by global error level")
 	server.Error("global error")
 	mysql.Debug("scope debug")
+}
+
+func TestLogSetOverridesNamedDefaultScope(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	logmgr.AddFlags(fs)
+
+	if err := fs.Parse([]string{
+		"--log-output=stderr",
+		"--log-set=output=stdout",
+		"--log-set=server.output=stderr",
+		"--log-set=db.output=stdout",
+	}); err != nil {
+		t.Fatalf("parse flags: %v", err)
+	}
+
+	m := logmgr.Init("server")
+	if got := log.Default().Writer(); got != os.Stderr {
+		t.Fatalf("named default scope log-set was not applied last: got %T, want stderr", got)
+	}
+	_ = m.MustAddScope("db")
 }
 
 func TestFlagHelpMetavars(t *testing.T) {
@@ -119,7 +139,7 @@ func TestFlagHelpMetavars(t *testing.T) {
 		"-log-file-dir dir",
 		"-log-file-size MB",
 		"-log-file-backups count",
-		"-log-scope scope.key=value",
+		"-log-set key=value",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("flag help missing %q:\n%s", want, out)
@@ -148,6 +168,26 @@ func TestDuplicateRegistration(t *testing.T) {
 	if _, err := scope.Add("mysql"); err == nil {
 		t.Fatal("expected duplicate scope printer error")
 	}
+}
+
+func TestEmptyNames(t *testing.T) {
+	mustPanic(t, func() {
+		logmgr.Init("")
+	})
+
+	m := logmgr.Init("server")
+	if _, err := m.AddScope(""); err == nil {
+		t.Fatal("expected empty scope name error")
+	}
+	if _, err := m.Add(""); err == nil {
+		t.Fatal("expected empty printer name error")
+	}
+	mustPanic(t, func() {
+		m.MustAddScope("")
+	})
+	mustPanic(t, func() {
+		m.MustAdd("")
+	})
 }
 
 func TestConcurrentDuplicateRegistration(t *testing.T) {

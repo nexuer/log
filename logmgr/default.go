@@ -19,6 +19,9 @@ func checkInit() {
 //
 // Calling Init again replaces the current manager.
 func Init(name string, opts ...Option) *Manager {
+	if name == "" {
+		panic(errors.New("logmgr: default scope name is empty"))
+	}
 	m := newManager(name, opts...)
 	defaultManager.Store(m)
 	return m

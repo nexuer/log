@@ -171,7 +171,7 @@ func WithReplacer(v log.Replacer) Option {
 	}}
 }
 
-func newConfig(opts []Option, flagsConfig *config) *config {
+func newConfig(opts []Option, flagsConfigs ...*config) *config {
 	next := &config{
 		Level:  &defaultLevel,
 		Format: &defaultFormat,
@@ -189,36 +189,43 @@ func newConfig(opts []Option, flagsConfig *config) *config {
 		}
 	}
 
-	if flagsConfig != nil {
-		if flagsConfig.Format != nil {
-			next.Format = flagsConfig.Format
-		}
-		if flagsConfig.Level != nil {
-			next.Level = flagsConfig.Level
-		}
-		if flagsConfig.Output != nil {
-			next.Output = flagsConfig.Output
-		}
-		if flagsConfig.File.Dir != nil {
-			next.File.Dir = flagsConfig.File.Dir
-		}
-		if flagsConfig.File.Size != nil {
-			next.File.Size = flagsConfig.File.Size
-		}
-		if flagsConfig.File.Backups != nil {
-			next.File.Backups = flagsConfig.File.Backups
-		}
-		if flagsConfig.File.Compress != nil {
-			next.File.Compress = flagsConfig.File.Compress
-		}
-		if flagsConfig.Replacer != nil {
-			next.Replacer = flagsConfig.Replacer
-		}
-		if len(flagsConfig.Fields) > 0 {
-			next.Fields = append(next.Fields, flagsConfig.Fields...)
-		}
+	for _, flagsConfig := range flagsConfigs {
+		mergeConfig(next, flagsConfig)
 	}
 	return next
+}
+
+func mergeConfig(next *config, flagsConfig *config) {
+	if flagsConfig == nil {
+		return
+	}
+	if flagsConfig.Format != nil {
+		next.Format = flagsConfig.Format
+	}
+	if flagsConfig.Level != nil {
+		next.Level = flagsConfig.Level
+	}
+	if flagsConfig.Output != nil {
+		next.Output = flagsConfig.Output
+	}
+	if flagsConfig.File.Dir != nil {
+		next.File.Dir = flagsConfig.File.Dir
+	}
+	if flagsConfig.File.Size != nil {
+		next.File.Size = flagsConfig.File.Size
+	}
+	if flagsConfig.File.Backups != nil {
+		next.File.Backups = flagsConfig.File.Backups
+	}
+	if flagsConfig.File.Compress != nil {
+		next.File.Compress = flagsConfig.File.Compress
+	}
+	if flagsConfig.Replacer != nil {
+		next.Replacer = flagsConfig.Replacer
+	}
+	if len(flagsConfig.Fields) > 0 {
+		next.Fields = append(next.Fields, flagsConfig.Fields...)
+	}
 }
 
 var (

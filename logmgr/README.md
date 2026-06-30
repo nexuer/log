@@ -62,8 +62,9 @@ With JSON format enabled, the same records look like:
 
 ## Singleton Manager
 
-`Init` installs the singleton manager and returns it. `M()` returns the current
-singleton manager and panics if `Init` has not been called.
+`Init` installs the singleton manager and returns it. Its `name` is the default
+scope name and must not be empty. `M()` returns the current singleton manager
+and panics if `Init` has not been called.
 
 ```go
 m := logmgr.Init("server")
@@ -126,10 +127,13 @@ if _, err := logmgr.M().Add("worker"); err != nil {
 
 ## Configuration
 
-Configuration is resolved from defaults, code options, and command-line flag
-values. Default-scope flags such as `--log-level` and `--log-format` configure
-the default scope. Scope flags such as `--log-scope=db.level=warn` configure
-the named scope when it is created, and override code options for that scope.
+Configuration is resolved from defaults, code options, command-line flags, and
+`--log-set`. Default-scope flags such as `--log-level` and `--log-format`
+configure the default scope. `--log-set` has the highest priority: `key=value`
+configures the default scope, and `scope.key=value` configures a named scope
+when it is created. The default scope also has a name, so `server.level=debug`
+applies to the default scope when it is named `server`.
+
 `Apply` rebuilds the resolved config for one scope and reapplies it to printers
 already created in that scope. Use it when changing level, format, output,
 fields, or replacer at runtime. An empty `Apply()` call is a no-op.
@@ -180,17 +184,19 @@ Default-scope flags:
 --log-file-compress=false
 ```
 
-Named-scope flags:
+Dynamic overrides:
 
 ```sh
---log-scope=db.level=warn
---log-scope=db.format=json
---log-scope=db.output=file
---log-scope=db.file-dir=log/db
---log-scope=db.file-size=256
---log-scope=db.file-backups=5
---log-scope=db.file-compress=false
+--log-set=level=debug
+--log-set=server.level=warn
+--log-set=db.level=warn
+--log-set=db.format=json
+--log-set=db.output=file
+--log-set=db.file-dir=log/db
+--log-set=db.file-size=256
+--log-set=db.file-backups=5
+--log-set=db.file-compress=false
 ```
 
-Scope flags use `scope.key=value`, so scopes can be configured before they are
-registered in code.
+`--log-set=key=value` configures the default scope. `--log-set=scope.key=value`
+configures a named scope before it is registered in code.
