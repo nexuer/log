@@ -1,8 +1,10 @@
 package logmgr_test
 
 import (
+	"bytes"
 	"flag"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 
@@ -99,6 +101,30 @@ func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
 	server.Info("filtered by global error level")
 	server.Error("global error")
 	mysql.Debug("scope debug")
+}
+
+func TestFlagHelpMetavars(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	logmgr.AddFlags(fs)
+
+	var buf bytes.Buffer
+	fs.SetOutput(&buf)
+	fs.PrintDefaults()
+	out := buf.String()
+
+	for _, want := range []string{
+		"-log-level level",
+		"-log-format format",
+		"-log-output output",
+		"-log-file-dir dir",
+		"-log-file-size MB",
+		"-log-file-backups count",
+		"-log-scope scope.key=value",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("flag help missing %q:\n%s", want, out)
+		}
+	}
 }
 
 func TestDuplicateRegistration(t *testing.T) {

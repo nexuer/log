@@ -7,24 +7,37 @@ import (
 	"strings"
 )
 
-type flagValue func(string) error
+type flagValue struct {
+	typ string
+	set func(string) error
+}
 
 func (v flagValue) Set(s string) error {
-	return v(s)
+	return v.set(s)
 }
 
 func (v flagValue) String() string {
 	return ""
 }
 
-type boolFlagValue func(string) error
+func (v flagValue) Type() string {
+	return v.typ
+}
+
+type boolFlagValue struct {
+	set func(string) error
+}
 
 func (v boolFlagValue) Set(s string) error {
-	return v(s)
+	return v.set(s)
 }
 
 func (v boolFlagValue) String() string {
 	return ""
+}
+
+func (v boolFlagValue) Type() string {
+	return "bool"
 }
 
 func (v boolFlagValue) IsBoolFlag() bool {
@@ -60,81 +73,104 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 		f.config = &config{}
 	}
 	fs.Var(
-		flagValue(func(s string) error {
-			return parseConfigField(f.config, "level", s)
-		}),
+		flagValue{
+			typ: "level",
+			set: func(s string) error {
+				return parseConfigField(f.config, "level", s)
+			},
+		},
 		"log-level",
-		fmt.Sprintf(`Set the log level. One of: ["debug", "info", "warn", "error", "fatal"] (default "%s")`, defaultLevel),
+		fmt.Sprintf(`Set log `+"`level`"+`. One of: debug, info, warn, error, fatal (default "%s")`, defaultLevel),
 	)
 	fs.Var(
-		flagValue(func(s string) error {
-			return parseConfigField(f.config, "output", s)
-		}),
+		flagValue{
+			typ: "output",
+			set: func(s string) error {
+				return parseConfigField(f.config, "output", s)
+			},
+		},
 		"log-output",
-		fmt.Sprintf(`Set the log output. Permitted output: "stderr", "stdout" or "file" (default "%s")`, defaultOutput),
+		fmt.Sprintf(`Set log `+"`output`"+`. One of: stderr, stdout, file (default "%s")`, defaultOutput),
 	)
 	fs.Var(
-		flagValue(func(s string) error {
-			return parseConfigField(f.config, "file-dir", s)
-		}),
+		flagValue{
+			typ: "dir",
+			set: func(s string) error {
+				return parseConfigField(f.config, "file-dir", s)
+			},
+		},
 		"log-file-dir",
-		fmt.Sprintf(`Directory to store log files (default "%s")`, defaultFileDir),
+		fmt.Sprintf("Directory `dir` to store log files (default %q)", defaultFileDir),
 	)
 	fs.Var(
-		flagValue(func(s string) error {
-			return parseConfigField(f.config, "format", s)
-		}),
+		flagValue{
+			typ: "format",
+			set: func(s string) error {
+				return parseConfigField(f.config, "format", s)
+			},
+		},
 		"log-format",
-		fmt.Sprintf(`Set the log format. Permitted formats: "text" or "json" (default "%s")`, defaultFormat),
+		fmt.Sprintf(`Set log `+"`format`"+`. One of: text, json (default "%s")`, defaultFormat),
 	)
 	fs.Var(
-		flagValue(func(s string) error {
-			if _, err := strconv.ParseInt(s, 10, 64); err != nil {
-				return fmt.Errorf("invalid log file size %q: %w", s, err)
-			}
-			return parseConfigField(f.config, "file-size", s)
-		}),
+		flagValue{
+			typ: "MB",
+			set: func(s string) error {
+				if _, err := strconv.ParseInt(s, 10, 64); err != nil {
+					return fmt.Errorf("invalid log file size %q: %w", s, err)
+				}
+				return parseConfigField(f.config, "file-size", s)
+			},
+		},
 		"log-file-size",
-		fmt.Sprintf(`Maximum size of each log file in MB, 0 means the default value (default %d MB)`, defaultFileSize),
+		fmt.Sprintf("Maximum log file size in `MB`, 0 means the default value (default %d MB)", defaultFileSize),
 	)
 	fs.Var(
-		flagValue(func(s string) error {
-			if _, err := strconv.ParseInt(s, 10, 64); err != nil {
-				return fmt.Errorf("invalid log file backups %q: %w", s, err)
-			}
-			return parseConfigField(f.config, "file-backups", s)
-		}),
+		flagValue{
+			typ: "count",
+			set: func(s string) error {
+				if _, err := strconv.ParseInt(s, 10, 64); err != nil {
+					return fmt.Errorf("invalid log file backups %q: %w", s, err)
+				}
+				return parseConfigField(f.config, "file-backups", s)
+			},
+		},
 		"log-file-backups",
-		fmt.Sprintf(`Maximum number of log file backups to retain, 0 means unlimited (default %d)`, defaultFileBackups),
+		fmt.Sprintf("Maximum backup `count` to retain, 0 means unlimited (default %d)", defaultFileBackups),
 	)
 	fs.Var(
-		boolFlagValue(func(s string) error {
-			if _, err := parseBool(s); err != nil {
-				return err
-			}
-			return parseConfigField(f.config, "file-compress", s)
-		}),
+		boolFlagValue{
+			set: func(s string) error {
+				if _, err := parseBool(s); err != nil {
+					return err
+				}
+				return parseConfigField(f.config, "file-compress", s)
+			},
+		},
 		"log-file-compress",
 		fmt.Sprintf("Enable gzip compression for rotated log files (default %t)", defaultFileCompress),
 	)
 	fs.Var(
-		flagValue(func(s string) error {
-			scope, key, value, err := splitScopeFlag(s)
-			if err != nil {
-				return err
-			}
-			cfg := f.scopes[scope]
-			if cfg == nil {
-				cfg = &config{}
-			}
-			if err := parseConfigField(cfg, key, value); err != nil {
-				return fmt.Errorf("invalid log-scope %q: %w", s, err)
-			}
-			f.scopes[scope] = cfg
-			return nil
-		}),
+		flagValue{
+			typ: "scope.key=value",
+			set: func(s string) error {
+				scope, key, value, err := splitScopeFlag(s)
+				if err != nil {
+					return err
+				}
+				cfg := f.scopes[scope]
+				if cfg == nil {
+					cfg = &config{}
+				}
+				if err := parseConfigField(cfg, key, value); err != nil {
+					return fmt.Errorf("invalid log-scope %q: %w", s, err)
+				}
+				f.scopes[scope] = cfg
+				return nil
+			},
+		},
 		"log-scope",
-		`Set scope log config, format: scope.key=value. Example: --log-scope=db.level=warn`,
+		"Set scope log config `scope.key=value`. Example: --log-scope=db.level=warn",
 	)
 }
 
