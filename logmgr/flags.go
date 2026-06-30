@@ -68,9 +68,9 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 	)
 	fs.Var(
 		flagValue(func(s string) error {
-			return parseConfigField(f.config, "dir", s)
+			return parseConfigField(f.config, "file-dir", s)
 		}),
-		"log-dir",
+		"log-file-dir",
 		fmt.Sprintf(`Directory to store log files (default "%s")`, defaultFileDir),
 	)
 	fs.Var(
@@ -83,21 +83,21 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 	fs.Var(
 		flagValue(func(s string) error {
 			if _, err := strconv.ParseInt(s, 10, 64); err != nil {
-				return fmt.Errorf("invalid log max size %q: %w", s, err)
+				return fmt.Errorf("invalid log file size %q: %w", s, err)
 			}
-			return parseConfigField(f.config, "max-size", s)
+			return parseConfigField(f.config, "file-size", s)
 		}),
-		"log-max-size",
+		"log-file-size",
 		fmt.Sprintf(`Maximum size of each log file in MB, 0 means the default value (default %d MB)`, defaultFileSize),
 	)
 	fs.Var(
 		flagValue(func(s string) error {
 			if _, err := strconv.ParseInt(s, 10, 64); err != nil {
-				return fmt.Errorf("invalid log max backups %q: %w", s, err)
+				return fmt.Errorf("invalid log file backups %q: %w", s, err)
 			}
-			return parseConfigField(f.config, "max-backups", s)
+			return parseConfigField(f.config, "file-backups", s)
 		}),
-		"log-max-backups",
+		"log-file-backups",
 		fmt.Sprintf(`Maximum number of log file backups to retain, 0 means unlimited (default %d)`, defaultFileBackups),
 	)
 	fs.Var(
@@ -105,9 +105,9 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 			if _, err := parseBool(s); err != nil {
 				return err
 			}
-			return parseConfigField(f.config, "compress", s)
+			return parseConfigField(f.config, "file-compress", s)
 		}),
-		"log-compress",
+		"log-file-compress",
 		fmt.Sprintf("Enable gzip compression for rotated log files (default %t)", defaultFileCompress),
 	)
 	fs.Var(

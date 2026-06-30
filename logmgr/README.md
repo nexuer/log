@@ -25,18 +25,18 @@ import (
 )
 
 func main() {
-	logmgr.Init("server",
+	m := logmgr.Init("server",
 		logmgr.WithFields(log.String("service", "api")),
 	)
-	logmgr.AddFlags(flag.CommandLine)
+	m.AddFlags(flag.CommandLine)
 	flag.Parse()
 
-	logmgr.MustAdd("worker")
-	db := logmgr.M().MustAddScope("db", logmgr.WithLevel(log.LevelWarn))
+	m.MustAdd("worker")
+	db := m.MustAddScope("db", logmgr.WithLevel(log.LevelWarn))
 	db.MustAdd("mysql")
 
-	logmgr.Printer().Info("server started")
-	logmgr.Printer("worker").Infof("job %d started", 42)
+	m.Printer().Info("server started")
+	m.Printer("worker").Infof("job %d started", 42)
 	db.Printer().Warn("database latency is high")
 	db.Printer("mysql").Error("query failed")
 }
@@ -72,13 +72,15 @@ m.MustAdd("worker")
 logmgr.M().Printer("worker").Info("started")
 ```
 
-Package-level helpers forward to the singleton manager:
+The package-level API is intentionally limited to `Init` and `M`. Use the
+returned manager, or call `logmgr.M()` when the manager is needed from another
+package:
 
 ```go
-logmgr.Printer().Info("server")
-logmgr.MustAdd("worker")
-logmgr.MustAddScope("db")
-logmgr.Apply(logmgr.WithFormat(logmgr.JsonFormat))
+logmgr.M().Printer().Info("server")
+logmgr.M().MustAdd("worker")
+logmgr.M().MustAddScope("db")
+logmgr.M().Apply(logmgr.WithFormat(logmgr.JsonFormat))
 ```
 
 ## Scopes
@@ -88,18 +90,18 @@ same resolved configuration. Each scope has a default printer with the scope
 name, and additional printers are named as `scope.printer`.
 
 ```go
-logmgr.Init("server", logmgr.WithLevel(log.LevelInfo))
+m := logmgr.Init("server", logmgr.WithLevel(log.LevelInfo))
 
-db := logmgr.M().MustAddScope("db",
+db := m.MustAddScope("db",
 	logmgr.WithLevel(log.LevelWarn),
 	logmgr.WithOutput(logmgr.StderrOutput),
 )
 db.MustAdd("mysql")
 
-logmgr.Printer().Info("server event")      // name: server
-logmgr.M().Printer().Info("same printer")  // name: server
-db.Printer().Warn("db event")              // name: db
-db.Printer("mysql").Error("mysql event")   // name: db.mysql
+m.Printer().Info("server event")          // name: server
+logmgr.M().Printer().Info("same printer") // name: server
+db.Printer().Warn("db event")             // name: db
+db.Printer("mysql").Error("mysql event")  // name: db.mysql
 ```
 
 Managers can also return a sorted snapshot of registered scopes:
@@ -114,10 +116,10 @@ Use the non-`Must` forms when duplicate registration should be handled
 explicitly:
 
 ```go
-if _, err := logmgr.AddScope("db"); err != nil {
+if _, err := logmgr.M().AddScope("db"); err != nil {
 	return err
 }
-if _, err := logmgr.Add("worker"); err != nil {
+if _, err := logmgr.M().Add("worker"); err != nil {
 	return err
 }
 ```
@@ -132,14 +134,12 @@ the named scope when it is created, and override code options for that scope.
 already created in that scope. Use it when changing level, format, output,
 fields, or replacer at runtime. An empty `Apply()` call is a no-op.
 
-Package-level `logmgr.Apply` and `logmgr.M().Apply` only update the default
-scope. They do not update every scope in the manager. Use `Scope.Apply` to
-change a named scope:
+`Manager.Apply` only updates the default scope. It does not update every scope
+in the manager. Use `Scope.Apply` to change a named scope:
 
 ```go
-logmgr.Apply(logmgr.WithFormat(logmgr.JsonFormat))              // default scope
-logmgr.M().Apply(logmgr.WithOutput(logmgr.StdoutOutput))        // default scope
-logmgr.M().Scope("db").Apply(logmgr.WithLevel(log.LevelError))  // db scope
+logmgr.M().Apply(logmgr.WithOutput(logmgr.StdoutOutput))       // default scope
+logmgr.M().Scope("db").Apply(logmgr.WithLevel(log.LevelError)) // db scope
 ```
 
 Available options:
@@ -161,8 +161,8 @@ logmgr.WithReplacer(replacer)
 Register flags after `Init` and before `flag.Parse`.
 
 ```go
-logmgr.Init("server")
-logmgr.AddFlags(flag.CommandLine)
+m := logmgr.Init("server")
+m.AddFlags(flag.CommandLine)
 flag.Parse()
 ```
 
@@ -172,20 +172,22 @@ Default-scope flags:
 --log-level=info
 --log-format=json
 --log-output=stderr
---log-dir=log
---log-max-size=512
---log-max-backups=5
---log-compress=false
+--log-file-dir=log
+--log-file-size=512
+--log-file-backups=5
+--log-file-compress=false
 ```
 
 Named-scope flags:
 
 ```sh
 --log-scope=db.level=warn
+--log-scope=db.format=json
 --log-scope=db.output=file
---log-scope=db.dir=log/db
---log-scope=http.level=debug
---log-scope=http.format=text
+--log-scope=db.file-dir=log/db
+--log-scope=db.file-size=256
+--log-scope=db.file-backups=5
+--log-scope=db.file-compress=false
 ```
 
 Scope flags use `scope.key=value`, so scopes can be configured before they are

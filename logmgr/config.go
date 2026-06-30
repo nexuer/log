@@ -268,24 +268,24 @@ func parseConfigField(cfg *config, key, value string) error {
 			return err
 		}
 		cfg.Output = &v
-	case "dir":
+	case "file-dir":
 		cfg.File.Dir = &value
-	case "max-size", "size":
+	case "file-size":
 		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return fmt.Errorf("invalid log max size %q: %w", value, err)
+			return fmt.Errorf("invalid log file size %q: %w", value, err)
 		}
 		cfg.File.Size = &v
-	case "max-backups", "backups":
+	case "file-backups":
 		v, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			return fmt.Errorf("invalid log max backups %q: %w", value, err)
+			return fmt.Errorf("invalid log file backups %q: %w", value, err)
 		}
 		cfg.File.Backups = &v
-	case "compress":
+	case "file-compress":
 		v, err := strconv.ParseBool(value)
 		if err != nil {
-			return fmt.Errorf("invalid log compress %q: %w", value, err)
+			return fmt.Errorf("invalid log file compress %q: %w", value, err)
 		}
 		cfg.File.Compress = &v
 	default:

@@ -22,14 +22,14 @@ func TestSingletonManagerAPI(t *testing.T) {
 		t.Fatalf("default scope name = %q, want %q", got, "server")
 	}
 
-	if _, err := logmgr.Add("worker"); err != nil {
+	if _, err := m.Add("worker"); err != nil {
 		t.Fatalf("Add returned error: %v", err)
 	}
 	if _, err := m.Add("worker"); err == nil {
 		t.Fatal("expected duplicate default-scope printer error")
 	}
 
-	db := logmgr.MustAddScope("db", logmgr.WithLevel(log.LevelError))
+	db := m.MustAddScope("db", logmgr.WithLevel(log.LevelError))
 	if got := m.Scope("db"); got != db {
 		t.Fatal("Scope did not return the registered scope")
 	}
@@ -47,25 +47,29 @@ func TestSingletonManagerAPI(t *testing.T) {
 		t.Fatalf("scope Add returned error: %v", err)
 	}
 
-	logmgr.Printer().Warn("server ready")
-	logmgr.Printer("worker").Error("worker failed")
+	m.Printer().Warn("server ready")
+	m.Printer("worker").Error("worker failed")
 	db.Printer().Error("database ready")
 	db.Printer("mysql").Error("query failed")
 
-	logmgr.Apply(logmgr.WithFormat(logmgr.TextFormat))
+	m.Apply(logmgr.WithFormat(logmgr.TextFormat))
 	db.Apply(logmgr.WithOutput(logmgr.StderrOutput))
 }
 
 func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
 	m := logmgr.Init("server")
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	logmgr.AddFlags(fs)
+	m.AddFlags(fs)
 
 	if err := fs.Parse([]string{
 		"--log-level=error",
 		"--log-format=json",
 		"--log-output=stderr",
+		"--log-file-size=128",
+		"--log-file-backups=3",
+		"--log-file-compress=true",
 		"--log-scope=db.level=debug",
+		"--log-scope=db.file-dir=log/db",
 	}); err != nil {
 		t.Fatalf("parse flags: %v", err)
 	}
