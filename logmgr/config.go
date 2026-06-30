@@ -123,6 +123,12 @@ func WithFields(v ...log.Field) Option {
 	}}
 }
 
+func With(v ...any) Option {
+	return Option{apply: func(c *config) {
+		c.Fields = log.Fields(v...)
+	}}
+}
+
 // WithOutput sets the output target.
 func WithOutput(v Output) Option {
 	return Option{apply: func(c *config) {

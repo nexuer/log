@@ -2,6 +2,7 @@ package logmgr_test
 
 import (
 	"flag"
+	"os"
 	"sync"
 	"testing"
 
@@ -11,7 +12,6 @@ import (
 
 func TestSingletonManagerAPI(t *testing.T) {
 	m := logmgr.Init("server", logmgr.WithLevel(log.LevelWarn))
-
 	if got := logmgr.M(); got != m {
 		t.Fatal("M did not return the manager installed by Init")
 	}
@@ -54,6 +54,24 @@ func TestSingletonManagerAPI(t *testing.T) {
 
 	m.Apply(logmgr.WithFormat(logmgr.TextFormat))
 	db.Apply(logmgr.WithOutput(logmgr.StderrOutput))
+}
+
+func TestDefaultLoggerFollowsDefaultScope(t *testing.T) {
+	m := logmgr.Init("server", logmgr.WithOutput(logmgr.StdoutOutput))
+	if got := log.Default().Writer(); got != os.Stdout {
+		t.Fatalf("default logger writer = %T, want stdout", got)
+	}
+
+	m.Apply(logmgr.WithOutput(logmgr.StderrOutput))
+	if got := log.Default().Writer(); got != os.Stderr {
+		t.Fatalf("default logger writer after Apply = %T, want stderr", got)
+	}
+
+	db := m.MustAddScope("db", logmgr.WithOutput(logmgr.StdoutOutput))
+	db.Apply(logmgr.WithOutput(logmgr.StdoutOutput))
+	if got := log.Default().Writer(); got != os.Stderr {
+		t.Fatalf("named scope changed default logger writer to %T, want stderr", got)
+	}
 }
 
 func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {

@@ -235,6 +235,7 @@ func (s *Scope) apply(force bool, opts ...Option) {
 
 	for k, v := range s.entries {
 		v.apply(k, s.config)
+		s.setDefaultLogger(k, v)
 	}
 }
 
@@ -311,5 +312,12 @@ func (s *Scope) upsertEntryLocked(name string, isInit bool) *entry {
 
 	e.apply(fullName, s.config)
 	s.entries[fullName] = e
+	s.setDefaultLogger(fullName, e)
 	return e
+}
+
+func (s *Scope) setDefaultLogger(name string, e *entry) {
+	if s.manager.isDefaultScope(s.name) && name == s.name {
+		log.SetDefault(e.logger)
+	}
 }
