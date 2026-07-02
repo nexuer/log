@@ -2,14 +2,10 @@
 
 [简体中文](./README.zh-CN.md)
 
-This structured logging library is developed with reference to Go's standard `log/slog`
-package. Although `slog` provides a solid foundation for structured logging, it does not
-support delayed field loading with the `With` method, resulting in premature evaluation of
-dynamic values. This reduces flexibility and efficiency in scenarios where log attributes,
-such as timestamps, request IDs, or metrics, require runtime computation. To address this,
-we rewrote this library.
+`github.com/nexuer/log` is a small structured logging package inspired by Go's
+standard `log/slog`. It keeps the familiar print, printf, and structured logging
+methods while adding delayed field evaluation for values attached with `With`.
 
-The core package focuses on logger, handler, fields, values, and dynamic field evaluation.
 Application-level logger management lives in the separate `logmgr` subpackage.
 
 ## Install
@@ -18,12 +14,13 @@ Application-level logger management lives in the separate `logmgr` subpackage.
 go get github.com/nexuer/log
 ```
 
-## Basic Usage
+## Quick Start
 
 ```go
 package main
 
 import (
+	"errors"
 	"os"
 
 	"github.com/nexuer/log"
@@ -35,35 +32,62 @@ func main() {
 		"caller", log.DefaultCaller,
 	)
 
-	logger.InfoS("starting server", "addr", ":8080")
-	logger.ErrorS(nil, "request failed", "path", "/api")
+	logger.Info("server starting")
+	logger.Infof("listening on %s", ":8080")
+	logger.InfoS("server started", "addr", ":8080")
+
+	err := errors.New("timeout")
+	logger.ErrorS("request failed", log.Err(err), "path", "/api")
 }
 ```
 
 Text output:
 
 ```text
-INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:12 msg="starting server" addr=:8080
+INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:15 msg="server starting"
+INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:16 msg="listening on :8080"
+INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:17 msg="server started" addr=:8080
+ERROR ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:20 msg="request failed" err=timeout path=/api
 ```
 
-## Text Handler
+## Logging Methods
+
+Each level has three method forms:
 
 ```go
-logger := log.New(os.Stdout, log.Text(&log.HandlerOptions{Name: "server"})).With(
-	"ts", log.DefaultTimestamp,
-	"caller", log.DefaultCaller,
-)
+logger.Info(args ...any)                 // fmt.Sprint-style message
+logger.Infof(format string, args ...any) // fmt.Sprintf-style message
+logger.InfoS(msg string, kvs ...any)     // structured message and fields
+```
 
-logger.InfoS("starting server", "addr", ":8080")
+Use `Info` for plain text, `Infof` for formatted text, and `InfoS` when the
+values should be emitted as fields:
+
+```go
+logger.Info("retry ", attempt, "/", max)
+logger.Infof("retry %d/%d", attempt, max)
+logger.InfoS("retry", "attempt", attempt, "max", max)
+```
+
+`Info(args...)` does not interpret key-value pairs as fields. For structured
+output, use the `S` methods.
+
+## Handlers
+
+The default handler is text:
+
+```go
+logger := log.New(os.Stdout, log.Text(&log.HandlerOptions{Name: "server"}))
+logger.InfoS("ready", "addr", ":8080")
 ```
 
 Output:
 
 ```text
-[server] INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:12 msg="starting server" addr=:8080
+[server] INFO msg=ready addr=:8080
 ```
 
-## JSON Handler
+Use `Json` for JSON output:
 
 ```go
 logger := log.New(os.Stdout, log.Json(&log.HandlerOptions{Name: "server"})).With(
@@ -82,7 +106,7 @@ Output:
 
 ## Fields
 
-Use typed helpers when possible:
+Typed field helpers are preferred when possible:
 
 ```go
 logger.InfoS("user login",
@@ -92,10 +116,17 @@ logger.InfoS("user login",
 )
 ```
 
-Key-value pairs are also supported:
+Plain key-value pairs are also supported:
 
 ```go
 logger.InfoS("user login", "user", "alice", "attempt", 1)
+```
+
+Use `Err` for the standard error field. A nil error returns an empty field and
+is not emitted:
+
+```go
+logger.ErrorS("request failed", log.Err(err), "path", "/api")
 ```
 
 `Fields` converts key-value pairs to reusable fields:
@@ -116,35 +147,50 @@ logger := log.New(os.Stdout).With(
 )
 ```
 
-This is useful for timestamps, caller data, request-scoped values, and other values that
-should not be precomputed when `With` is called.
+This is useful for timestamps, caller data, request-scoped values, and other
+values that should not be computed when `With` is called.
 
-## Readonly Logger
+## Printer
 
-`Readonly` is a restricted wrapper for code that should only emit messages. It does not
-expose structured field logging, `With`, output changes, handler changes, `Close`, or `Fatal`.
+`Printer` is a restricted wrapper for code that should only emit plain log
+messages. It exposes print, printf, and `io.Writer` style methods only. It does
+not expose structured `S` methods, `With`, output changes, handler changes,
+`Close`, or `Fatal`.
 
 ```go
-readonly := log.NewReadonly(logger)
+printer := log.NewPrinter(logger)
 
-readonly.Info("server started")
-readonly.Infof("listening on %s", ":8080")
-_, _ = readonly.Write([]byte("message from io.Writer"))
+printer.Info("server started")
+printer.Infof("listening on %s", ":8080")
+_, _ = printer.Write([]byte("message from io.Writer"))
 ```
+
+Use `Logger` instead of `Printer` when structured fields are needed.
 
 ## Global Logger
 
 ```go
 log.SetDefault(log.New(os.Stdout).With(log.DefaultFields...))
 
+log.Info("server starting")
 log.InfoS("server started", "addr", ":8080")
-log.ErrorS(err, "request failed", "path", "/api")
+log.ErrorS("request failed", log.Err(err), "path", "/api")
+```
+
+## Fatal
+
+`Fatal`, `Fatalf`, and `FatalS` write a fatal-level record and then exit with
+status code `1`.
+
+```go
+logger.FatalS("listen failed", log.Err(err), "addr", addr)
 ```
 
 ## Manager
 
-Use `github.com/nexuer/log/logmgr` when an application needs multiple logger instances,
-shared configuration, command-line flags, or scope-level configuration.
+Use `github.com/nexuer/log/logmgr` when an application needs multiple logger
+instances, shared configuration, command-line flags, or scope-level
+configuration.
 
 See [logmgr/README.md](./logmgr/README.md).
 

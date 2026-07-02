@@ -1,12 +1,21 @@
 package log
 
 import (
+	"bytes"
 	"os"
 	"testing"
 )
 
+type closeBuffer struct {
+	bytes.Buffer
+}
+
+func (b *closeBuffer) Close() error {
+	return nil
+}
+
 func TestMultiWriteCloser(t *testing.T) {
-	logger := New(MultiWriter(os.Stdout, os.Stderr))
+	logger := New(MultiWriter(&closeBuffer{}, &closeBuffer{}))
 
 	logger.Info("hello world")
 	if err := logger.Close(); err != nil {

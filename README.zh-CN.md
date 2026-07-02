@@ -2,13 +2,10 @@
 
 [English](./README.md)
 
-`github.com/nexuer/log` 是参考 Go 标准库 `log/slog` 实现的结构化日志库。`slog`
-为结构化日志提供了很好的基础，但它的 `With` 方法不支持字段延迟加载，会导致动态值被提前求值。
-当日志属性需要在运行时计算时，例如时间戳、请求 ID 或指标数据，这会降低灵活性和效率。
-为了解决这个问题，我们重新实现了这个库。
+`github.com/nexuer/log` 是一个参考 Go 标准库 `log/slog` 设计的轻量结构化日志库。
+它保留了常见的 print、printf 和 structured 三种日志方法，同时支持 `With` 字段的延迟求值。
 
-核心包只保留 logger、handler、field、value 和动态字段能力；应用级日志统一管理放在
-`logmgr` 子包中。
+应用级日志统一管理放在 `logmgr` 子包中。
 
 ## 安装
 
@@ -16,12 +13,13 @@
 go get github.com/nexuer/log
 ```
 
-## 基础用法
+## 快速开始
 
 ```go
 package main
 
 import (
+	"errors"
 	"os"
 
 	"github.com/nexuer/log"
@@ -33,35 +31,60 @@ func main() {
 		"caller", log.DefaultCaller,
 	)
 
-	logger.InfoS("starting server", "addr", ":8080")
-	logger.ErrorS(nil, "request failed", "path", "/api")
+	logger.Info("server starting")
+	logger.Infof("listening on %s", ":8080")
+	logger.InfoS("server started", "addr", ":8080")
+
+	err := errors.New("timeout")
+	logger.ErrorS("request failed", log.Err(err), "path", "/api")
 }
 ```
 
 Text 输出：
 
 ```text
-INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:12 msg="starting server" addr=:8080
+INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:15 msg="server starting"
+INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:16 msg="listening on :8080"
+INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:17 msg="server started" addr=:8080
+ERROR ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:20 msg="request failed" err=timeout path=/api
 ```
 
-## Text 输出
+## 日志方法
+
+每个日志级别都有三种方法：
 
 ```go
-logger := log.New(os.Stdout, log.Text(&log.HandlerOptions{Name: "server"})).With(
-	"ts", log.DefaultTimestamp,
-	"caller", log.DefaultCaller,
-)
+logger.Info(args ...any)                 // fmt.Sprint 风格
+logger.Infof(format string, args ...any) // fmt.Sprintf 风格
+logger.InfoS(msg string, kvs ...any)     // 结构化消息和字段
+```
 
-logger.InfoS("starting server", "addr", ":8080")
+`Info` 用于普通文本，`Infof` 用于格式化文本，`InfoS` 用于输出结构化字段：
+
+```go
+logger.Info("retry ", attempt, "/", max)
+logger.Infof("retry %d/%d", attempt, max)
+logger.InfoS("retry", "attempt", attempt, "max", max)
+```
+
+`Info(args...)` 不会把键值对解释成字段。需要结构化输出时，请使用 `S` 方法。
+
+## Handler
+
+默认 handler 是 text：
+
+```go
+logger := log.New(os.Stdout, log.Text(&log.HandlerOptions{Name: "server"}))
+logger.InfoS("ready", "addr", ":8080")
 ```
 
 输出：
 
 ```text
-[server] INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:12 msg="starting server" addr=:8080
+[server] INFO msg=ready addr=:8080
 ```
 
-## JSON 输出
+使用 `Json` 输出 JSON：
 
 ```go
 logger := log.New(os.Stdout, log.Json(&log.HandlerOptions{Name: "server"})).With(
@@ -96,6 +119,12 @@ logger.InfoS("user login",
 logger.InfoS("user login", "user", "alice", "attempt", 1)
 ```
 
+使用 `Err` 输出标准错误字段。nil error 会返回空字段，不会被输出：
+
+```go
+logger.ErrorS("request failed", log.Err(err), "path", "/api")
+```
+
 `Fields` 可以把键值对转换成可复用字段：
 
 ```go
@@ -116,13 +145,38 @@ logger := log.New(os.Stdout).With(
 
 适合时间戳、调用位置、请求上下文等不应该在 `With` 时提前计算的字段。
 
+## Printer
+
+`Printer` 是一个受限包装器，适合只允许输出普通日志文本的代码。它只暴露 print、printf
+和 `io.Writer` 风格的方法，不暴露结构化 `S` 方法、`With`、输出修改、handler 修改、
+`Close` 或 `Fatal`。
+
+```go
+printer := log.NewPrinter(logger)
+
+printer.Info("server started")
+printer.Infof("listening on %s", ":8080")
+_, _ = printer.Write([]byte("message from io.Writer"))
+```
+
+需要结构化字段时，请直接使用 `Logger`。
+
 ## 全局 Logger
 
 ```go
 log.SetDefault(log.New(os.Stdout).With(log.DefaultFields...))
 
+log.Info("server starting")
 log.InfoS("server started", "addr", ":8080")
-log.ErrorS(err, "request failed", "path", "/api")
+log.ErrorS("request failed", log.Err(err), "path", "/api")
+```
+
+## Fatal
+
+`Fatal`、`Fatalf` 和 `FatalS` 会写入 fatal 级别日志，然后以状态码 `1` 退出进程。
+
+```go
+logger.FatalS("listen failed", log.Err(err), "addr", addr)
 ```
 
 ## 日志管理

@@ -7,6 +7,8 @@ import (
 	"os"
 )
 
+var exitFunc = os.Exit
+
 type Handler interface {
 	WithFields(ctx context.Context, fields ...Field) Handler
 
@@ -235,19 +237,9 @@ func (l *Logger) Errorf(format string, args ...any) {
 }
 
 // ErrorS logs a message at error level with key vals.
-func (l *Logger) ErrorS(err error, msg string, kvs ...any) {
-	if err == nil {
-		errorHandler(l.log(LevelError, msg, nil, kvs...))
-		return
-	}
-	if len(kvs) == 0 {
-		errorHandler(l.log(LevelError, msg, nil, ErrKey, err.Error()))
-		return
-	}
-	nv := make([]any, 0, len(kvs)+2)
-	nv = append(nv, ErrKey, err.Error())
-	nv = append(nv, kvs...)
-	errorHandler(l.log(LevelError, msg, nil, nv...))
+func (l *Logger) ErrorS(msg string, kvs ...any) {
+	err := l.log(LevelError, msg, nil, kvs...)
+	errorHandler(err)
 }
 
 // Fatal logs a message at fatal level.
@@ -255,7 +247,7 @@ func (l *Logger) Fatal(args ...any) {
 	err := l.log(LevelFatal, "", args)
 	errorHandler(err)
 
-	os.Exit(1)
+	exitFunc(1)
 }
 
 // Fatalf logs a message at warn level.
@@ -263,25 +255,15 @@ func (l *Logger) Fatalf(format string, args ...any) {
 	err := l.log(LevelFatal, format, args)
 	errorHandler(err)
 
-	os.Exit(1)
+	exitFunc(1)
 }
 
 // FatalS logs a message at fatal level with key vals.
-func (l *Logger) FatalS(err error, msg string, kvs ...any) {
-	if err == nil {
-		errorHandler(l.log(LevelFatal, msg, nil, kvs...))
-		return
-	}
-	if len(kvs) == 0 {
-		errorHandler(l.log(LevelFatal, msg, nil, ErrKey, err.Error()))
-		return
-	}
-	nv := make([]any, 0, len(kvs)+2)
-	nv = append(nv, ErrKey, err.Error())
-	nv = append(nv, kvs...)
-	errorHandler(l.log(LevelFatal, msg, nil, nv...))
+func (l *Logger) FatalS(msg string, kvs ...any) {
+	err := l.log(LevelFatal, msg, nil, kvs...)
+	errorHandler(err)
 
-	os.Exit(1)
+	exitFunc(1)
 }
 
 // getMessage format with Sprint, Sprintf, or neither.

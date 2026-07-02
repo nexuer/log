@@ -1,4 +1,4 @@
-package logmgr_test
+package logmgr
 
 import (
 	"bytes"
@@ -9,12 +9,23 @@ import (
 	"testing"
 
 	"github.com/nexuer/log"
-	"github.com/nexuer/log/logmgr"
 )
 
+func resetDefault(t *testing.T) {
+	t.Helper()
+	defaultManager.Store(nil)
+	defaultFlags = newFlags()
+	t.Cleanup(func() {
+		defaultManager.Store(nil)
+		defaultFlags = newFlags()
+	})
+}
+
 func TestSingletonManagerAPI(t *testing.T) {
-	m := logmgr.Init("server", logmgr.WithLevel(log.LevelWarn))
-	if got := logmgr.M(); got != m {
+	resetDefault(t)
+
+	m := Init("server", WithLevel(log.LevelWarn))
+	if got := M(); got != m {
 		t.Fatal("M did not return the manager installed by Init")
 	}
 	if got := m.DefaultScope(); got != m.Scope("server") {
@@ -24,14 +35,12 @@ func TestSingletonManagerAPI(t *testing.T) {
 		t.Fatalf("default scope name = %q, want %q", got, "server")
 	}
 
-	if _, err := m.Add("worker"); err != nil {
-		t.Fatalf("Add returned error: %v", err)
-	}
-	if _, err := m.Add("worker"); err == nil {
-		t.Fatal("expected duplicate default-scope printer error")
+	worker := m.Printer("worker")
+	if got := m.Printer("worker"); got != worker {
+		t.Fatal("Printer did not return the existing default-scope printer")
 	}
 
-	db := m.MustAddScope("db", logmgr.WithLevel(log.LevelError))
+	db := m.MustAddScope("db", WithLevel(log.LevelError))
 	if got := m.Scope("db"); got != db {
 		t.Fatal("Scope did not return the registered scope")
 	}
@@ -45,8 +54,9 @@ func TestSingletonManagerAPI(t *testing.T) {
 	if scopes[0].Name() != "db" || scopes[1].Name() != "server" {
 		t.Fatalf("Scopes returned names [%q %q], want [db server]", scopes[0].Name(), scopes[1].Name())
 	}
-	if _, err := db.Add("mysql"); err != nil {
-		t.Fatalf("scope Add returned error: %v", err)
+	mysql := db.Printer("mysql")
+	if got := db.Printer("mysql"); got != mysql {
+		t.Fatal("Printer did not return the existing scope printer")
 	}
 
 	m.Printer().Warn("server ready")
@@ -54,31 +64,75 @@ func TestSingletonManagerAPI(t *testing.T) {
 	db.Printer().Error("database ready")
 	db.Printer("mysql").Error("query failed")
 
-	m.Apply(logmgr.WithFormat(logmgr.TextFormat))
-	db.Apply(logmgr.WithOutput(logmgr.StderrOutput))
+	m.Apply(WithFormat(TextFormat))
+	db.Apply(WithOutput(StderrOutput))
 }
 
 func TestDefaultLoggerFollowsDefaultScope(t *testing.T) {
-	m := logmgr.Init("server", logmgr.WithOutput(logmgr.StdoutOutput))
+	resetDefault(t)
+
+	m := Init("server", WithOutput(StdoutOutput))
 	if got := log.Default().Writer(); got != os.Stdout {
 		t.Fatalf("default logger writer = %T, want stdout", got)
 	}
 
-	m.Apply(logmgr.WithOutput(logmgr.StderrOutput))
+	m.Apply(WithOutput(StderrOutput))
 	if got := log.Default().Writer(); got != os.Stderr {
 		t.Fatalf("default logger writer after Apply = %T, want stderr", got)
 	}
 
-	db := m.MustAddScope("db", logmgr.WithOutput(logmgr.StdoutOutput))
-	db.Apply(logmgr.WithOutput(logmgr.StdoutOutput))
+	db := m.MustAddScope("db", WithOutput(StdoutOutput))
+	db.Apply(WithOutput(StdoutOutput))
 	if got := log.Default().Writer(); got != os.Stderr {
 		t.Fatalf("named scope changed default logger writer to %T, want stderr", got)
 	}
 }
 
+func TestScopeInheritsInitOptionsAndOverrides(t *testing.T) {
+	resetDefault(t)
+
+	m := Init("server",
+		WithFields(log.String("service", "api")),
+		WithOutput(StdoutOutput),
+		WithLevel(log.LevelInfo),
+	)
+	db := m.MustAddScope("db", WithLevel(log.LevelError))
+
+	if got := *db.config.Output; got != StdoutOutput {
+		t.Fatalf("scope output = %v, want %v", got, StdoutOutput)
+	}
+	if got := *db.config.Level; got != log.LevelError {
+		t.Fatalf("scope level = %v, want %v", got, log.LevelError)
+	}
+	if len(db.config.Fields) != 1 || !db.config.Fields[0].Equal(log.String("service", "api")) {
+		t.Fatalf("scope fields = %v, want service=api", db.config.Fields)
+	}
+}
+
+func TestApplyPreservesCurrentScopeConfig(t *testing.T) {
+	resetDefault(t)
+
+	m := Init("server", WithFields(log.String("service", "api")), WithOutput(StdoutOutput))
+	db := m.MustAddScope("db", WithLevel(log.LevelWarn))
+
+	db.Apply(WithLevel(log.LevelDebug))
+
+	if got := *db.config.Output; got != StdoutOutput {
+		t.Fatalf("scope output after Apply = %v, want %v", got, StdoutOutput)
+	}
+	if got := *db.config.Level; got != log.LevelDebug {
+		t.Fatalf("scope level after Apply = %v, want %v", got, log.LevelDebug)
+	}
+	if len(db.config.Fields) != 1 || !db.config.Fields[0].Equal(log.String("service", "api")) {
+		t.Fatalf("scope fields after Apply = %v, want service=api", db.config.Fields)
+	}
+}
+
 func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
+	resetDefault(t)
+
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	logmgr.AddFlags(fs)
+	AddFlags(fs)
 
 	if err := fs.Parse([]string{
 		"--log-level=error",
@@ -93,10 +147,10 @@ func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
 		t.Fatalf("parse flags: %v", err)
 	}
 
-	m := logmgr.Init("server")
-	server := m.MustAdd("worker")
+	m := Init("server")
+	server := m.Printer("worker")
 	db := m.MustAddScope("db")
-	mysql := db.MustAdd("mysql")
+	mysql := db.Printer("mysql")
 
 	server.Info("filtered by global error level")
 	server.Error("global error")
@@ -104,8 +158,10 @@ func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
 }
 
 func TestLogSetOverridesNamedDefaultScope(t *testing.T) {
+	resetDefault(t)
+
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	logmgr.AddFlags(fs)
+	AddFlags(fs)
 
 	if err := fs.Parse([]string{
 		"--log-output=stderr",
@@ -116,7 +172,7 @@ func TestLogSetOverridesNamedDefaultScope(t *testing.T) {
 		t.Fatalf("parse flags: %v", err)
 	}
 
-	m := logmgr.Init("server")
+	m := Init("server")
 	if got := log.Default().Writer(); got != os.Stderr {
 		t.Fatalf("named default scope log-set was not applied last: got %T, want stderr", got)
 	}
@@ -124,8 +180,10 @@ func TestLogSetOverridesNamedDefaultScope(t *testing.T) {
 }
 
 func TestFlagHelpMetavars(t *testing.T) {
+	resetDefault(t)
+
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
-	logmgr.AddFlags(fs)
+	AddFlags(fs)
 
 	var buf bytes.Buffer
 	fs.SetOutput(&buf)
@@ -147,51 +205,51 @@ func TestFlagHelpMetavars(t *testing.T) {
 	}
 }
 
-func TestDuplicateRegistration(t *testing.T) {
-	m := logmgr.Init("server")
+func TestDuplicateScopeRegistration(t *testing.T) {
+	resetDefault(t)
+
+	m := Init("server")
 
 	if _, err := m.AddScope("server"); err == nil {
 		t.Fatal("expected duplicate default scope error")
 	}
 
-	if _, err := m.Add("worker"); err != nil {
-		t.Fatalf("Add returned error: %v", err)
-	}
-	if _, err := m.Add("worker"); err == nil {
-		t.Fatal("expected duplicate printer error")
-	}
-
 	scope := m.MustAddScope("db")
-	if _, err := scope.Add("mysql"); err != nil {
-		t.Fatalf("scope Add returned error: %v", err)
+	if _, err := m.AddScope("db"); err == nil {
+		t.Fatal("expected duplicate scope error")
 	}
-	if _, err := scope.Add("mysql"); err == nil {
-		t.Fatal("expected duplicate scope printer error")
-	}
+	_ = scope
 }
 
 func TestEmptyNames(t *testing.T) {
+	resetDefault(t)
+
 	mustPanic(t, func() {
-		logmgr.Init("")
+		Init("")
 	})
 
-	m := logmgr.Init("server")
+	m := Init("server")
 	if _, err := m.AddScope(""); err == nil {
 		t.Fatal("expected empty scope name error")
-	}
-	if _, err := m.Add(""); err == nil {
-		t.Fatal("expected empty printer name error")
 	}
 	mustPanic(t, func() {
 		m.MustAddScope("")
 	})
+}
+
+func TestInitPanicsWhenCalledTwice(t *testing.T) {
+	resetDefault(t)
+
+	Init("server")
 	mustPanic(t, func() {
-		m.MustAdd("")
+		Init("worker")
 	})
 }
 
-func TestConcurrentDuplicateRegistration(t *testing.T) {
-	m := logmgr.Init("server")
+func TestConcurrentScopeRegistrationAndPrinterCreation(t *testing.T) {
+	resetDefault(t)
+
+	m := Init("server")
 
 	var wg sync.WaitGroup
 	scopeErrs := make(chan error, 8)
@@ -217,51 +275,51 @@ func TestConcurrentDuplicateRegistration(t *testing.T) {
 	}
 
 	scope := m.Scope("db")
-	entryErrs := make(chan error, 8)
+	printers := make(chan log.Printer, 8)
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := scope.Add("mysql")
-			entryErrs <- err
+			printers <- scope.Printer("mysql")
 		}()
 	}
 	wg.Wait()
-	close(entryErrs)
+	close(printers)
 
-	entrySuccess := 0
-	for err := range entryErrs {
-		if err == nil {
-			entrySuccess++
+	var first log.Printer
+	for p := range printers {
+		if first == nil {
+			first = p
+			continue
 		}
-	}
-	if entrySuccess != 1 {
-		t.Fatalf("Scope.Add successes = %d, want 1", entrySuccess)
+		if p != first {
+			t.Fatal("concurrent Printer calls returned different printers")
+		}
 	}
 }
 
-func TestMustHelpersPanicOnDuplicate(t *testing.T) {
-	m := logmgr.Init("server")
-	m.MustAdd("worker")
+func TestMustAddScopePanicOnDuplicate(t *testing.T) {
+	resetDefault(t)
+
+	m := Init("server")
 	m.MustAddScope("db")
 
-	mustPanic(t, func() {
-		m.MustAdd("worker")
-	})
 	mustPanic(t, func() {
 		m.MustAddScope("db")
 	})
 }
 
-func TestMissingScopeAndPrinterPanic(t *testing.T) {
-	m := logmgr.Init("server")
+func TestMissingScopePanicAndPrinterCreates(t *testing.T) {
+	resetDefault(t)
+
+	m := Init("server")
 
 	mustPanic(t, func() {
 		m.Scope("missing")
 	})
-	mustPanic(t, func() {
-		m.Printer("missing")
-	})
+	if got := m.Printer("missing"); got == nil {
+		t.Fatal("Printer returned nil")
+	}
 }
 
 func mustPanic(t *testing.T, f func()) {

@@ -112,8 +112,8 @@ func Errorf(format string, args ...any) {
 }
 
 // ErrorS logs a message at error level with key vals.
-func ErrorS(err error, msg string, kvs ...any) {
-	defaultLogger.Load().ErrorS(err, msg, kvs...)
+func ErrorS(msg string, kvs ...any) {
+	defaultLogger.Load().ErrorS(msg, kvs...)
 }
 
 // Fatal logs a message at fatal level.
@@ -127,6 +127,6 @@ func Fatalf(format string, args ...any) {
 }
 
 // FatalS logs a message at fatal level with key vals.
-func FatalS(err error, msg string, kvs ...any) {
-	defaultLogger.Load().FatalS(err, msg, kvs...)
+func FatalS(msg string, kvs ...any) {
+	defaultLogger.Load().FatalS(msg, kvs...)
 }

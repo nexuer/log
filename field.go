@@ -42,6 +42,15 @@ func Bool(key string, v bool) Field {
 	return Field{key, BoolValue(v)}
 }
 
+// Err returns a Field for an error using the standard error key.
+// A nil error returns an empty field and is not emitted.
+func Err(err error) Field {
+	if err == nil {
+		return Field{}
+	}
+	return String(ErrKey, err.Error())
+}
+
 // Time returns an Attr for a [time.Time].
 // It discards the monotonic portion.
 func Time(key string, v time.Time) Field {

@@ -2,9 +2,9 @@
 
 [简体中文](./README.zh-CN.md)
 
-`github.com/nexuer/log/logmgr` is the singleton application logger manager for
-`github.com/nexuer/log`. It keeps one process-wide manager, organizes printers
-by scope, applies shared configuration, and supports command-line overrides.
+`github.com/nexuer/log/logmgr` is the process-wide logger manager for
+`github.com/nexuer/log`. The application owner initializes it once, creates
+configured scopes, and packages use `log.Printer` values to write logs.
 
 ## Install
 
@@ -12,7 +12,21 @@ by scope, applies shared configuration, and supports command-line overrides.
 go get github.com/nexuer/log
 ```
 
-## Basic Usage
+## Startup Flow
+
+```mermaid
+flowchart TD
+	A[Register log flags] --> B[Parse flags]
+	B --> C[Init default scope once]
+	C --> D[Add named scopes]
+	D --> E[Get printers by name]
+	E --> F[Write logs]
+
+	C -. Init options .-> D
+	D -. Scope config .-> E
+```
+
+Typical setup:
 
 ```go
 package main
@@ -25,15 +39,14 @@ import (
 )
 
 func main() {
-	m := logmgr.Init("server",
-		logmgr.WithFields(log.String("service", "api")),
-	)
 	logmgr.AddFlags(flag.CommandLine)
 	flag.Parse()
 
-	m.MustAdd("worker")
+	m := logmgr.Init("server",
+		logmgr.WithFields(log.String("service", "api")),
+	)
+
 	db := m.MustAddScope("db", logmgr.WithLevel(log.LevelWarn))
-	db.MustAdd("mysql")
 
 	m.Printer().Info("server started")
 	m.Printer("worker").Infof("job %d started", 42)
@@ -42,70 +55,82 @@ func main() {
 }
 ```
 
-Text output looks like:
+Text output:
 
 ```text
 [server] INFO service=api msg="server started"
 [server.worker] INFO service=api msg="job 42 started"
-[db] WARN msg="database latency is high"
-[db.mysql] ERROR msg="query failed"
+[db] WARN service=api msg="database latency is high"
+[db.mysql] ERROR service=api msg="query failed"
 ```
 
-With JSON format enabled, the same records look like:
+JSON output with JSON format enabled:
 
 ```json
 {"name":"server","level":"INFO","service":"api","msg":"server started"}
 {"name":"server.worker","level":"INFO","service":"api","msg":"job 42 started"}
-{"name":"db","level":"WARN","msg":"database latency is high"}
-{"name":"db.mysql","level":"ERROR","msg":"query failed"}
+{"name":"db","level":"WARN","service":"api","msg":"database latency is high"}
+{"name":"db.mysql","level":"ERROR","service":"api","msg":"query failed"}
 ```
 
-## Singleton Manager
+## Core API
 
-`Init` installs the singleton manager and returns it. Its `name` is the default
-scope name and must not be empty. `M()` returns the current singleton manager
-and panics if `Init` has not been called.
+`Init(name, opts...)` installs the singleton manager. It may only be called
+once; calling it again panics. `name` is the default scope name and must not be
+empty.
 
 ```go
 m := logmgr.Init("server")
-
-m.MustAdd("worker")
 logmgr.M().Printer("worker").Info("started")
 ```
 
-The package-level API is intentionally limited to `Init` and `M`. Use the
-returned manager, or call `logmgr.M()` when the manager is needed from another
-package:
+`M()` returns the singleton manager and panics if `Init` has not been called.
+This keeps ownership clear: startup code initializes the manager, and other
+packages either receive `log.Printer` values or call `logmgr.M()` after startup.
+
+`AddScope(name, opts...)` creates a named configuration scope. It returns an
+error if the scope already exists. `MustAddScope` panics on that error.
 
 ```go
-logmgr.M().Printer().Info("server")
-logmgr.M().MustAdd("worker")
-logmgr.M().MustAddScope("db")
-logmgr.M().Apply(logmgr.WithFormat(logmgr.JsonFormat))
+db, err := logmgr.M().AddScope("db", logmgr.WithLevel(log.LevelWarn))
+if err != nil {
+	return err
+}
+_ = db
+```
+
+`Printer(name)` is get-or-create. Repeated calls with the same name return the
+same printer, and creating a printer does not change scope configuration.
+
+```go
+worker := logmgr.M().Printer("worker") // name: server.worker
+mysql := logmgr.M().Scope("db").Printer("mysql") // name: db.mysql
 ```
 
 ## Scopes
 
-A scope is a named configuration area. Printers in the same scope share the
-same resolved configuration. Each scope has a default printer with the scope
-name, and additional printers are named as `scope.printer`.
+A scope is a named configuration area. Printers in the same scope share the same
+resolved configuration. Every scope has a default printer with the scope name;
+additional printers are named as `scope.printer`.
+
+`AddScope` inherits the options passed to `Init`. Scope options are applied
+after inherited options, so they can override them:
 
 ```go
-m := logmgr.Init("server", logmgr.WithLevel(log.LevelInfo))
-
-db := m.MustAddScope("db",
-	logmgr.WithLevel(log.LevelWarn),
-	logmgr.WithOutput(logmgr.StderrOutput),
+m := logmgr.Init("server",
+	logmgr.WithFields(log.String("service", "api")),
+	logmgr.WithLevel(log.LevelInfo),
 )
-db.MustAdd("mysql")
 
-m.Printer().Info("server event")          // name: server
-logmgr.M().Printer().Info("same printer") // name: server
-db.Printer().Warn("db event")             // name: db
-db.Printer("mysql").Error("mysql event")  // name: db.mysql
+db := m.MustAddScope("db", logmgr.WithLevel(log.LevelWarn))
+
+m.Printer().Info("server event")         // level INFO, fields service=api
+db.Printer().Info("filtered db event")   // filtered by WARN
+db.Printer().Warn("visible db event")    // fields service=api
+db.Printer("mysql").Error("mysql event") // fields service=api
 ```
 
-Managers can also return a sorted snapshot of registered scopes:
+Registered scopes can be inspected:
 
 ```go
 for _, scope := range logmgr.M().Scopes() {
@@ -113,38 +138,30 @@ for _, scope := range logmgr.M().Scopes() {
 }
 ```
 
-Use the non-`Must` forms when duplicate registration should be handled
-explicitly:
-
-```go
-if _, err := logmgr.M().AddScope("db"); err != nil {
-	return err
-}
-if _, err := logmgr.M().Add("worker"); err != nil {
-	return err
-}
-```
-
 ## Configuration
 
-Configuration is resolved from defaults, code options, command-line flags, and
-`--log-set`. Default-scope flags such as `--log-level` and `--log-format`
-configure the default scope. `--log-set` has the highest priority: `key=value`
-configures the default scope, and `scope.key=value` configures a named scope
-when it is created. The default scope also has a name, so `server.level=debug`
-applies to the default scope when it is named `server`.
+Configuration is resolved in this order:
 
-`Apply` rebuilds the resolved config for one scope and reapplies it to printers
-already created in that scope. Use it when changing level, format, output,
-fields, or replacer at runtime. An empty `Apply()` call is a no-op.
-
-`Manager.Apply` only updates the default scope. It does not update every scope
-in the manager. Use `Scope.Apply` to change a named scope:
-
-```go
-logmgr.M().Apply(logmgr.WithOutput(logmgr.StdoutOutput))       // default scope
-logmgr.M().Scope("db").Apply(logmgr.WithLevel(log.LevelError)) // db scope
+```mermaid
+flowchart LR
+	A[Defaults] --> B[Init options]
+	B --> C[AddScope options]
+	C --> D[Flags]
+	D --> E[log-set overrides]
 ```
+
+Rules:
+
+- `Init` options are the baseline for the default scope and all scopes created
+  with `AddScope`.
+- `AddScope` options only affect that scope and override inherited `Init`
+  options.
+- Default-scope flags such as `--log-level` and `--log-format` configure only
+  the default scope.
+- `--log-set=key=value` configures the default scope.
+- `--log-set=scope.key=value` configures a named scope when it is created.
+- The default scope also has a name, so `--log-set=server.level=debug` applies
+  to the default scope when it is named `server`.
 
 Available options:
 
@@ -157,13 +174,29 @@ logmgr.WithFileSize(512)
 logmgr.WithFileBackups(5)
 logmgr.WithFileCompress(true)
 logmgr.WithFields(log.String("service", "api"))
+logmgr.AppendFields(log.String("component", "worker"))
+logmgr.WithKeyValues("service", "api")
+logmgr.AppendKeyValues("component", "worker")
 logmgr.WithReplacer(replacer)
 ```
 
-## Command-line Overrides
+## Runtime Changes
 
-Register and parse flags before `Init`. Parsed values are applied when the
-manager or scope is created.
+`Apply` updates an existing scope configuration and reapplies it to printers
+already created in that scope.
+
+```go
+logmgr.M().Apply(logmgr.WithOutput(logmgr.StdoutOutput))       // default scope
+logmgr.M().Scope("db").Apply(logmgr.WithLevel(log.LevelError)) // db scope
+```
+
+`Manager.Apply` only updates the default scope. It does not update every named
+scope. Use `Scope.Apply` for a named scope.
+
+## Command-Line Configuration
+
+Register and parse flags before `Init`, so parsed values can be applied when
+the default scope and named scopes are created.
 
 ```go
 logmgr.AddFlags(flag.CommandLine)
@@ -198,5 +231,11 @@ Dynamic overrides:
 --log-set=db.file-compress=false
 ```
 
-`--log-set=key=value` configures the default scope. `--log-set=scope.key=value`
-configures a named scope before it is registered in code.
+Example:
+
+```sh
+app --log-format=json --log-set=db.level=error --log-set=db.output=file
+```
+
+This sets JSON format on the default scope, and configures the `db` scope with
+level `error` and file output when `AddScope("db")` is called.

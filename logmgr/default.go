@@ -11,14 +11,17 @@ var defaultFlags = newFlags()
 
 func checkInit() {
 	if defaultManager.Load() == nil {
-		panic(errors.New("logmgr is not initialized"))
+		panic(errors.New("logmgr: not initialized"))
 	}
 }
 
 // Init creates and installs the singleton manager.
 //
-// Calling Init again replaces the current manager.
+// Calling Init again panics.
 func Init(name string, opts ...Option) *Manager {
+	if defaultManager.Load() != nil {
+		panic(errors.New("logmgr: already initialized"))
+	}
 	if name == "" {
 		panic(errors.New("logmgr: default scope name is empty"))
 	}

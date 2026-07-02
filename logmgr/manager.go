@@ -14,19 +14,21 @@ import (
 type Manager struct {
 	mu *sync.RWMutex
 
-	name   string
-	scopes map[string]*Scope
+	initOptions []Option
+	name        string
+	scopes      map[string]*Scope
 }
 
 // newManager creates a Manager with a default scope named after name.
 func newManager(name string, opts ...Option) *Manager {
 	m := &Manager{
-		name:   name,
-		mu:     new(sync.RWMutex),
-		scopes: make(map[string]*Scope),
+		name:        name,
+		initOptions: opts,
+		mu:          new(sync.RWMutex),
+		scopes:      make(map[string]*Scope),
 	}
 	// add default scope
-	_ = m.addScope(name, opts...)
+	_ = m.addScope(name)
 	return m
 }
 
@@ -48,15 +50,30 @@ func (m *Manager) addScope(name string, opts ...Option) *Scope {
 	return m.addScopeLocked(name, opts...)
 }
 
+func (m *Manager) scopeOpts(opts ...Option) []Option {
+	if len(opts) == 0 {
+		return m.initOptions
+	}
+
+	if len(m.initOptions) == 0 {
+		return opts
+	}
+
+	scopeOpts := make([]Option, 0, len(m.initOptions)+len(opts))
+	scopeOpts = append(scopeOpts, m.initOptions...)
+	scopeOpts = append(scopeOpts, opts...)
+	return scopeOpts
+}
+
 func (m *Manager) addScopeLocked(name string, opts ...Option) *Scope {
 	scope := &Scope{
 		name:    name,
 		manager: m,
-		config:  newConfig(opts, m.flagConfigs(name)...),
+		config:  applyConfig(nil, m.scopeOpts(opts...), m.flagConfigs(name)...),
 		entries: make(map[string]*entry),
 	}
 
-	scope.upsertEntryLocked(name, true)
+	scope.upsertEntryLocked(name)
 	m.scopes[name] = scope
 	return scope
 }
@@ -66,18 +83,6 @@ func (m *Manager) getScope(name string) (*Scope, bool) {
 	defer m.mu.RUnlock()
 	scope, ok := m.scopes[name]
 	return scope, ok
-}
-
-// Add registers a named printer in the default scope.
-//
-// It returns an error if the printer already exists.
-func (m *Manager) Add(name string) (log.Printer, error) {
-	return m.DefaultScope().Add(name)
-}
-
-// MustAdd is like Add but panics if the printer already exists.
-func (m *Manager) MustAdd(name string) log.Printer {
-	return m.DefaultScope().MustAdd(name)
 }
 
 // AddScope registers a named scope.
@@ -118,7 +123,8 @@ func (m *Manager) Apply(opts ...Option) {
 // Printer returns a printer from the default scope.
 //
 // With no name, it returns the default printer for the default scope. With a
-// name, it returns a printer previously registered by Add or MustAdd.
+// name, it returns an existing printer or creates one with the default scope's
+// configuration.
 func (m *Manager) Printer(name ...string) log.Printer {
 	return m.Scope(m.name).Printer(name...)
 }
@@ -224,7 +230,8 @@ func (s *Scope) apply(force bool, opts ...Option) {
 	s.locker().Lock()
 	defer s.locker().Unlock()
 	// new config
-	s.config = newConfig(opts, s.manager.flagConfigs(s.name)...)
+
+	s.config = applyConfig(s.config, opts, s.manager.flagConfigs(s.name)...)
 
 	for k, v := range s.entries {
 		v.apply(k, s.config)
@@ -235,20 +242,31 @@ func (s *Scope) apply(force bool, opts ...Option) {
 // Printer returns a printer from the scope.
 //
 // With no name, it returns the scope's default printer. With a name, it returns
-// a printer previously registered by Add or MustAdd.
+// an existing printer or creates one with the scope's configuration.
 func (s *Scope) Printer(name ...string) log.Printer {
 	fullName := s.name
 
-	if len(name) > 0 {
+	if len(name) > 0 && name[0] != "" {
 		fullName = s.fullName(name[0])
 	}
 
-	e, _ := s.getEntry(fullName)
-	if e == nil {
-		panic(fmt.Errorf(`logmgr: %q printer does not exist in scope %q`, name, s.name))
+	s.locker().RLock()
+	e := s.entries[fullName]
+	s.locker().RUnlock()
+	if e != nil {
+		return e.printer
 	}
 
+	// create
+	s.locker().Lock()
+	defer s.locker().Unlock()
+
+	e = s.entries[fullName]
+	if e == nil {
+		e = s.upsertEntryLocked(fullName)
+	}
 	return e.printer
+
 }
 
 func (s *Scope) fullName(name string) string {
@@ -265,51 +283,17 @@ func (s *Scope) getEntry(name string) (*entry, bool) {
 	return e, ok
 }
 
-// MustAdd is like Add but panics if the printer already exists.
-func (s *Scope) MustAdd(name string) log.Printer {
-	p, err := s.Add(name)
-	if err != nil {
-		panic(err)
-	}
-	return p
-}
-
-// Add registers a named printer in the scope.
-//
-// It returns an error if the printer already exists.
-func (s *Scope) Add(name string) (log.Printer, error) {
-	if name == "" {
-		return nil, fmt.Errorf("logmgr: printer name is empty in scope %q", s.name)
-	}
-
-	s.locker().Lock()
-	defer s.locker().Unlock()
-
-	fullName := s.fullName(name)
-	if _, ok := s.entries[fullName]; ok {
-		return nil, fmt.Errorf(`logmgr: %q printer already exists in scope %q`, name, s.name)
-	}
-
-	e := s.upsertEntryLocked(name, false)
-	return e.printer, nil
-}
-
-func (s *Scope) upsertEntryLocked(name string, isInit bool) *entry {
-	fullName := s.fullName(name)
-	if isInit {
-		fullName = name
-	}
-
-	e := s.entries[fullName]
+func (s *Scope) upsertEntryLocked(name string) *entry {
+	e := s.entries[name]
 	if e == nil {
 		e = &entry{
 			logger: log.New(os.Stderr),
 		}
 	}
 
-	e.apply(fullName, s.config)
-	s.entries[fullName] = e
-	s.setDefaultLogger(fullName, e)
+	e.apply(name, s.config)
+	s.entries[name] = e
+	s.setDefaultLogger(name, e)
 	return e
 }
 

@@ -123,9 +123,24 @@ func WithFields(v ...log.Field) Option {
 	}}
 }
 
-func With(v ...any) Option {
+// AppendFields appends fields that are included in every record.
+func AppendFields(v ...log.Field) Option {
+	return Option{apply: func(c *config) {
+		c.Fields = append(c.Fields, v...)
+	}}
+}
+
+// WithKeyValues sets fields from key-value pairs that are included in every record.
+func WithKeyValues(v ...any) Option {
 	return Option{apply: func(c *config) {
 		c.Fields = log.Fields(v...)
+	}}
+}
+
+// AppendKeyValues appends fields from key-value pairs that are included in every record.
+func AppendKeyValues(v ...any) Option {
+	return Option{apply: func(c *config) {
+		c.Fields = append(c.Fields, log.Fields(v...)...)
 	}}
 }
 
@@ -171,18 +186,21 @@ func WithReplacer(v log.Replacer) Option {
 	}}
 }
 
-func newConfig(opts []Option, flagsConfigs ...*config) *config {
-	next := &config{
-		Level:  &defaultLevel,
-		Format: &defaultFormat,
-		Output: &defaultOutput,
-		File: fileConfig{
-			Dir:      &defaultFileDir,
-			Size:     &defaultFileSize,
-			Backups:  &defaultFileBackups,
-			Compress: &defaultFileCompress,
-		},
+func applyConfig(next *config, opts []Option, flagsConfigs ...*config) *config {
+	if next == nil {
+		next = &config{ // default config
+			Level:  &defaultLevel,
+			Format: &defaultFormat,
+			Output: &defaultOutput,
+			File: fileConfig{
+				Dir:      &defaultFileDir,
+				Size:     &defaultFileSize,
+				Backups:  &defaultFileBackups,
+				Compress: &defaultFileCompress,
+			},
+		}
 	}
+
 	for _, opt := range opts {
 		if opt.apply != nil {
 			opt.apply(next)

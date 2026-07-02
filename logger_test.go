@@ -87,11 +87,8 @@ func TestLoggerTextLevel(t *testing.T) {
 
 	l.Error("error", " log")
 	l.Errorf("errorf %d %d", 1, 2)
-	l.ErrorS(errors.New("error msg"), "errorS", "key", "value")
-
-	//l.Fatal("fatal", " log")
-	//l.Fatalf("fatalf %d %d", 1, 2)
-	l.FatalS(errors.New("error msg"), "fatalS", "key", "value")
+	l.ErrorS("errorS", Err(errors.New("error msg")), "key", "value")
+	l.ErrorS("errorS", Err(nil), "key", "value")
 }
 
 func TestLoggerJsonLevel(t *testing.T) {
@@ -110,11 +107,53 @@ func TestLoggerJsonLevel(t *testing.T) {
 
 	l.Error("error", " log")
 	l.Errorf("errorf %d %d", 1, 2)
-	l.ErrorS(errors.New("error msg"), "errorS", "key", "value")
+	l.ErrorS("errorS", Err(errors.New("error msg")), "key", "value")
+}
 
-	//l.Fatal("fatal", " log")
-	//l.Fatalf("fatalf %d %d", 1, 2)
-	l.FatalS(errors.New("error msg"), "fatalS", "key", "value")
+func TestLoggerFatalSExit(t *testing.T) {
+	oldExit := exitFunc
+	defer func() {
+		exitFunc = oldExit
+	}()
+
+	tests := []struct {
+		name string
+		log  func(*Logger)
+	}{
+		{
+			name: "fatal",
+			log: func(l *Logger) {
+				l.Fatal("fatal")
+			},
+		},
+		{
+			name: "fatalf",
+			log: func(l *Logger) {
+				l.Fatalf("fatalf %d", 1)
+			},
+		},
+		{
+			name: "fatals",
+			log: func(l *Logger) {
+				l.FatalS("fatalS", Err(errors.New("error msg")), "key", "value")
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got int
+			exitFunc = func(code int) {
+				got = code
+			}
+
+			tt.log(New(io.Discard))
+
+			if got != 1 {
+				t.Fatalf("exit code = %d, want 1", got)
+			}
+		})
+	}
 }
 
 func TestLogger(t *testing.T) {
