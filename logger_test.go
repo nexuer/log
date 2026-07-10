@@ -1,113 +1,123 @@
 package log
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
-	"log/slog"
-	"os"
+	"reflect"
 	"testing"
-	"time"
 )
 
-func TestWrite(t *testing.T) {
-	var w io.Writer
-	w = New(os.Stdout).With(DefaultFields...)
+func TestLoggerTextOutput(t *testing.T) {
+	var buf bytes.Buffer
+	New(&buf).InfoS("done", "id", 1, "ok", true)
 
-	w.Write([]byte("hello world"))
-
-	w = New(os.Stdout, Json()).With(DefaultFields...)
-	w.Write([]byte("hello world"))
-
-	var wc io.WriteCloser
-
-	wc = New(os.Stdout).With(DefaultFields...)
-
-	wc.Write([]byte("hello world"))
-
-	wc = New(os.Stdout, Json()).With(DefaultFields...)
-	wc.Write([]byte("hello world"))
+	want := "INFO msg=done id=1 ok=true\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("text output = %q, want %q", got, want)
+	}
 }
 
-func TestLoggerWith(t *testing.T) {
-	l := New(os.Stderr).With(Group("g", "key", "1"))
+func TestLoggerJSONOutput(t *testing.T) {
+	var buf bytes.Buffer
+	New(&buf, Json()).InfoS("done", "id", 1, "ok", true)
 
-	l2 := l.With("sep", "|", Group("g", "key", "2"))
-
-	l.Info("info")
-	l2.Info("info")
-
-	slog.Info("info", slog.Group("g", "key", "1"), "sep", "|", slog.Group("g", "key", "2"))
-
-	jl := New(os.Stderr, Json()).With(Group("g", "key", "1"))
-	jl2 := jl.With("sep", "|", Group("g", "key", "2"))
-
-	jl.Info("info")
-	jl2.Info("info")
-
-	sjl := slog.New(slog.NewJSONHandler(os.Stderr, nil))
-	sjl.Info("info", slog.Group("g", "key", "1"), "sep", "|", slog.Group("g", "key", "2"))
+	want := `{"level":"INFO","msg":"done","id":1,"ok":true}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("json output = %q, want %q", got, want)
+	}
 }
 
-func TestReplacer(t *testing.T) {
-	sl := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		AddSource: true,
-		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-			fmt.Printf("%+v, %s\n", groups, a.Value)
-			return a
+func TestLoggerWithFields(t *testing.T) {
+	var buf bytes.Buffer
+	logger := New(&buf, Json()).With("service", "api")
+
+	logger.InfoS("done", "id", 1)
+
+	want := `{"level":"INFO","msg":"done","service":"api","id":1}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("json output = %q, want %q", got, want)
+	}
+}
+
+func TestLoggerWithGroupText(t *testing.T) {
+	var buf bytes.Buffer
+	logger := New(&buf).WithGroup("request")
+
+	logger.InfoS("done", "id", "req-1", "method", "GET")
+
+	want := "INFO msg=done request.id=req-1 request.method=GET\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("text output = %q, want %q", got, want)
+	}
+}
+
+func TestLoggerWithGroupJSON(t *testing.T) {
+	var buf bytes.Buffer
+	logger := New(&buf, Json()).WithGroup("request")
+
+	logger.InfoS("done", "id", "req-1", "method", "GET")
+
+	want := `{"level":"INFO","msg":"done","request":{"id":"req-1","method":"GET"}}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("json output = %q, want %q", got, want)
+	}
+}
+
+func TestLoggerWithGroupKeepsCallOrder(t *testing.T) {
+	var buf bytes.Buffer
+	logger := New(&buf, Json()).
+		With("service", "api").
+		WithGroup("request").
+		With("id", "req-1").
+		WithGroup("user")
+
+	logger.InfoS("login", "id", 42)
+
+	want := `{"level":"INFO","msg":"login","service":"api","request":{"id":"req-1","user":{"id":42}}}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("json output = %q, want %q", got, want)
+	}
+}
+
+func TestLoggerWithEmptyGroupReturnsReceiver(t *testing.T) {
+	logger := New(io.Discard)
+	if got := logger.WithGroup(""); got != logger {
+		t.Fatalf("WithGroup(empty) returned a new logger")
+	}
+}
+
+func TestLoggerWithGroupReplacerGroups(t *testing.T) {
+	var buf bytes.Buffer
+	var calls []string
+	logger := New(&buf, Text(&HandlerOptions{
+		Replacer: func(ctx context.Context, groups []string, field Field) Field {
+			if field.Key == LevelKey || field.Key == MessageKey {
+				return field
+			}
+			calls = append(calls, field.Key+":"+joinGroups(groups))
+			return field
 		},
-	}))
+	})).WithGroup("request").With("id", "req-1")
 
-	sl.Info("info", slog.Group("g", "key", "1"), "sep", "|", slog.Group("g2", "key", "2"))
-	fmt.Println("----------------------------------------- json ----------------------------------------- ")
-	sjl := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		AddSource: true,
-		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-			fmt.Printf("%+v, %s\n", groups, a.Value)
-			return a
-		},
-	}))
-	sjl.Info("info", slog.Group("g", "key", "1"), "sep", "|", slog.Group("g2", "key", "2"))
+	logger.InfoS("done", "method", "GET")
+
+	wantCalls := []string{"id:request", "method:request"}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("replacer calls = %#v, want %#v", calls, wantCalls)
+	}
 }
 
-func TestLoggerTextLevel(t *testing.T) {
-	l := New(os.Stderr).SetLevel(LevelDebug)
-	l.Debug("debug", " log")
-	l.Debugf("debugf %d %d", 1, 2)
-	l.DebugS("debugS", "key", "value")
-
-	l.Info("info", " log")
-	l.Infof("infof %d %d", 1, 2)
-	l.InfoS("infoS", "key", "value")
-
-	l.Warn("warn", " log")
-	l.Warnf("warnf %d %d", 1, 2)
-	l.WarnS("warnS", "key", "value")
-
-	l.Error("error", " log")
-	l.Errorf("errorf %d %d", 1, 2)
-	l.ErrorS("errorS", Err(errors.New("error msg")), "key", "value")
-	l.ErrorS("errorS", Err(nil), "key", "value")
-}
-
-func TestLoggerJsonLevel(t *testing.T) {
-	l := New(os.Stderr, Json()).SetLevel(LevelDebug)
-	l.Debug("debug", " log")
-	l.Debugf("debugf %d %d", 1, 2)
-	l.DebugS("debugS", "key", "value")
-
-	l.Info("info", " log")
-	l.Infof("infof %d %d", 1, 2)
-	l.InfoS("infoS", "key", "value")
-
-	l.Warn("warn", " log")
-	l.Warnf("warnf %d %d", 1, 2)
-	l.WarnS("warnS", "key", "value")
-
-	l.Error("error", " log")
-	l.Errorf("errorf %d %d", 1, 2)
-	l.ErrorS("errorS", Err(errors.New("error msg")), "key", "value")
+func joinGroups(groups []string) string {
+	if len(groups) == 0 {
+		return ""
+	}
+	out := groups[0]
+	for _, group := range groups[1:] {
+		out += "." + group
+	}
+	return out
 }
 
 func TestLoggerFatalSExit(t *testing.T) {
@@ -154,83 +164,4 @@ func TestLoggerFatalSExit(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestLogger(t *testing.T) {
-	//Info("it is info log")
-
-	l := New(os.Stderr, Text(&HandlerOptions{
-		Name: "http",
-		Replacer: func(ctx context.Context, groups []string, field Field) Field {
-			fmt.Println(ctx, groups, field)
-			return field
-		},
-	})).With(
-		"ts", DefaultTimestamp,
-		"caller", DefaultCaller,
-		"key1", 10,
-		"key2", 20.2,
-		"key3", true,
-		"key4", time.Now(),
-		"key5", time.Duration(2222),
-		"key6", "value6",
-		"key7", "value7",
-		"key8", "value8",
-		Group("keys",
-			"key9", "value9",
-			Group("key10", "value10", "value10"),
-		),
-	)
-	l.InfoS(fakeMessage,
-		"key11", "value11",
-		"key12", "value12",
-		"key13", time.Duration(7788),
-		"key14", "value14",
-		"key15", time.Now(),
-		"key16", "value16",
-		"key17", 30,
-		"key18", 22.22,
-		Group("keys",
-			"key19", false,
-			"key20", "value20",
-		),
-	)
-
-	jsonL := New(os.Stderr, Json(&HandlerOptions{
-		Name: "grpc",
-		Replacer: func(ctx context.Context, groups []string, field Field) Field {
-			fmt.Println(ctx, groups, field)
-			return field
-		},
-	})).WithContext(context.TODO()).With(
-		"ts", DefaultTimestamp,
-		"caller", DefaultCaller,
-		"key1", 10,
-		"key2", 20.2,
-		"key3", true,
-		"key4", time.Now(),
-		"key5", time.Duration(2222),
-		"key6", "value6",
-		"key7", "value7",
-		"key8", "value8",
-		Group("keys",
-			"key9", "value9",
-			"key10", "value10",
-		),
-	)
-
-	jsonL.InfoS(fakeMessage,
-		"key11", "value11",
-		"key12", "value12",
-		"key13", time.Duration(7788),
-		"key14", "value14",
-		"key15", time.Now(),
-		"key16", "value16",
-		"key17", 30,
-		"key18", 22.22,
-		Group("keys",
-			"key19", false,
-			"key20", "value20",
-		),
-	)
 }

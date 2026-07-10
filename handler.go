@@ -31,6 +31,9 @@ type commonHandler struct {
 	json              bool
 	opts              HandlerOptions
 	preformattedAttrs []preformattedAttr
+	groupPrefix       string
+	groups            []string
+	nOpenGroups       int
 	mu                *sync.Mutex
 }
 
@@ -52,6 +55,9 @@ func (h *commonHandler) clone() *commonHandler {
 		json:              h.json,
 		opts:              h.opts,
 		preformattedAttrs: slices.Clip(h.preformattedAttrs),
+		groupPrefix:       h.groupPrefix,
+		groups:            slices.Clip(h.groups),
+		nOpenGroups:       h.nOpenGroups,
 		mu:                h.mu, // mutex shared among all clones of this handler
 	}
 }
@@ -66,8 +72,39 @@ func (h *commonHandler) withFields(ctx context.Context, fields []Field) *commonH
 	var state handleState
 	state = h2.newHandleState(buffer.NewNonCap(), false, h.attrSep())
 	defer state.free()
-	state.appendFields(ctx, fields, true, false)
+	_, _ = state.prefix.WriteString(h.groupPrefix)
+	if h.hasPreformattedAttrs() {
+		state.sep = h.attrSep()
+		if h.json && h.lastPreformattedByte() == '{' {
+			state.sep = ""
+		}
+	}
+	state.openGroups()
+	if state.appendFields(ctx, fields, true, false) {
+		h2.groupPrefix = state.prefix.String()
+		h2.nOpenGroups = len(h2.groups)
+	}
 	return h2
+}
+
+func (h *commonHandler) withGroup(name string) *commonHandler {
+	h2 := h.clone()
+	h2.groups = append(h2.groups, name)
+	return h2
+}
+
+func (h *commonHandler) hasPreformattedAttrs() bool {
+	return len(h.preformattedAttrs) > 0
+}
+
+func (h *commonHandler) lastPreformattedByte() byte {
+	for i := len(h.preformattedAttrs) - 1; i >= 0; i-- {
+		bs := h.preformattedAttrs[i].bytes
+		if len(bs) > 0 {
+			return bs[len(bs)-1]
+		}
+	}
+	return 0
 }
 
 func (s *handleState) appendFields(ctx context.Context, fields []Field, isPreformat bool, isGroup bool) bool {
@@ -77,7 +114,7 @@ func (s *handleState) appendFields(ctx context.Context, fields []Field, isPrefor
 			nonEmpty = true
 		}
 	}
-	if isPreformat && !isGroup && s.buf.Len() > 0 {
+	if isPreformat && !isGroup && nonEmpty && s.buf.Len() > 0 {
 		s.h.preformattedAttrs = append(s.h.preformattedAttrs, preformattedAttr{
 			bytes: *s.buf,
 		})
@@ -174,6 +211,7 @@ func (h *commonHandler) newHandleState(buf *buffer.Buffer, freeBuf bool, sep str
 	// enable group
 	if h.opts.Replacer != nil {
 		s.groups = groupPool.Get().(*[]string)
+		*s.groups = append(*s.groups, h.groups[:h.nOpenGroups]...)
 	}
 	return s
 }
@@ -187,6 +225,12 @@ func (s *handleState) free() {
 		groupPool.Put(gs)
 	}
 	s.prefix.Free()
+}
+
+func (s *handleState) openGroups() {
+	for _, name := range s.h.groups[s.h.nOpenGroups:] {
+		s.openGroup(name)
+	}
 }
 
 // Separator for group names and keys.
@@ -336,9 +380,9 @@ func (s *handleState) appendByte(c byte) {
 	_ = s.buf.WriteByte(c)
 }
 
-func (s *handleState) appendPreformattedAttrs(ctx context.Context) {
+func (s *handleState) appendPreformattedAttrs(ctx context.Context) bool {
 	if len(s.h.preformattedAttrs) == 0 {
-		return
+		return false
 	}
 	for _, attr := range s.h.preformattedAttrs {
 		if len(attr.bytes) > 0 {
@@ -348,13 +392,39 @@ func (s *handleState) appendPreformattedAttrs(ctx context.Context) {
 			s.appendValue(attr.valuer(ctx).Resolve(ctx))
 		}
 	}
+	s.sep = s.h.attrSep()
+	return true
 }
 
 func (s *handleState) appendNonBuiltIns(ctx context.Context, kvs []any) {
-	var a Field
-	for len(kvs) > 0 {
-		a, kvs = kvsToField(kvs)
-		s.appendField(ctx, a, false)
+	nOpenGroups := s.h.nOpenGroups
+	s.appendPreformattedAttrs(ctx)
+
+	if len(kvs) > 0 {
+		_, _ = s.prefix.WriteString(s.h.groupPrefix)
+		pos := s.buf.Len()
+		s.openGroups()
+		nOpenGroups = len(s.h.groups)
+
+		nonEmpty := false
+		var a Field
+		for len(kvs) > 0 {
+			a, kvs = kvsToField(kvs)
+			if s.appendField(ctx, a, false) {
+				nonEmpty = true
+			}
+		}
+		if !nonEmpty {
+			s.buf.SetLen(pos)
+			nOpenGroups = s.h.nOpenGroups
+		}
+	}
+
+	if s.h.json {
+		for range s.h.groups[:nOpenGroups] {
+			s.appendByte('}')
+		}
+		s.appendByte('}')
 	}
 }
 
@@ -389,8 +459,6 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 		state.sep = h.attrSep()
 	}
 
-	state.appendPreformattedAttrs(ctx)
-
 	// ignore replace message
 	if rep != nil {
 		rep(ctx, nil, String(MessageKey, msg))
@@ -404,10 +472,6 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 	state.groups = stateGroups // Restore groups passed to ReplaceAttrs.
 
 	state.appendNonBuiltIns(ctx, kvs)
-
-	if h.json {
-		state.appendByte('}')
-	}
 
 	state.appendByte('\n')
 

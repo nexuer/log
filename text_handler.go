@@ -30,6 +30,12 @@ func (h *textHandler) WithFields(ctx context.Context, fields ...Field) Handler {
 	}
 }
 
+func (h *textHandler) WithGroup(name string) Handler {
+	return &textHandler{
+		handler: h.handler.withGroup(name),
+	}
+}
+
 func (h *textHandler) Handle(ctx context.Context, w io.Writer, level Level, msg string, kvs ...any) error {
 	return h.handler.handle(ctx, w, level, msg, kvs...)
 }

@@ -34,6 +34,12 @@ func (j *jsonHandler) WithFields(ctx context.Context, fields ...Field) Handler {
 	}
 }
 
+func (j *jsonHandler) WithGroup(name string) Handler {
+	return &jsonHandler{
+		handler: j.handler.withGroup(name),
+	}
+}
+
 func (j *jsonHandler) Handle(ctx context.Context, w io.Writer, level Level, msg string, kvs ...any) error {
 	return j.handler.handle(ctx, w, level, msg, kvs...)
 }

@@ -11,6 +11,7 @@ var exitFunc = os.Exit
 
 type Handler interface {
 	WithFields(ctx context.Context, fields ...Field) Handler
+	WithGroup(name string) Handler
 
 	// Handle handles the Log with Context, Writer, Level , Message and the arguments.
 	Handle(ctx context.Context, w io.Writer, level Level, msg string, kvs ...any) error
@@ -161,6 +162,15 @@ func (l *Logger) WithFields(fields ...Field) *Logger {
 	}
 	l2 := l.clone()
 	l2.handler = l.handler.WithFields(l.ctx, fields...)
+	return l2
+}
+
+func (l *Logger) WithGroup(name string) *Logger {
+	if name == "" || l.handler == nil {
+		return l
+	}
+	l2 := l.clone()
+	l2.handler = l.handler.WithGroup(name)
 	return l2
 }
 

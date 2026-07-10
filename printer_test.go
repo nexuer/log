@@ -1,24 +1,38 @@
 package log_test
 
 import (
-	"os"
-	"reflect"
+	"bytes"
 	"testing"
 
 	"github.com/nexuer/log"
 )
 
-func TestNewPrinter(t *testing.T) {
-	l := log.NewPrinter(nil)
+func TestNewPrinterUsesProvidedLogger(t *testing.T) {
+	var buf bytes.Buffer
+	printer := log.NewPrinter(log.New(&buf))
 
-	l.Info("hello world")
+	printer.Info("hello")
 
-	v := reflect.ValueOf(l).Elem().FieldByName("logger")
-	if v.IsValid() {
-		//z := v.Interface() // panic: reflect: call of reflect.Value.Interface on unexported type
-		//_ = z
+	want := "INFO msg=hello\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("printer output = %q, want %q", got, want)
+	}
+}
+
+func TestPrinterWrite(t *testing.T) {
+	var buf bytes.Buffer
+	printer := log.NewPrinter(log.New(&buf))
+
+	n, err := printer.Write([]byte("hello"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != len("hello") {
+		t.Fatalf("Write returned n = %d, want %d", n, len("hello"))
 	}
 
-	l = log.NewPrinter(log.New(os.Stderr, log.Text()).With(log.DefaultFields...))
-	l.Info("hello world")
+	want := "INFO msg=hello\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("printer output = %q, want %q", got, want)
+	}
 }
