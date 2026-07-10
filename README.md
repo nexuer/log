@@ -104,6 +104,23 @@ Output:
 {"level":"INFO","logger":"server","service":"api","ts":"2026-06-26T17:30:00+08:00","msg":"ready","port":8080}
 ```
 
+### slog Handlers
+
+Nexuer handlers can be used behind the standard `log/slog` API:
+
+```go
+native := log.New(os.Stdout, log.Json(&log.HandlerOptions{Name: "server"})).
+	SetLevel(log.LevelInfo)
+logger := slog.New(native.SlogHandler())
+logger.Info("ready", "port", 8080)
+```
+
+`Logger.SlogHandler` preserves the Logger's current output, level, handler,
+fields, and groups. It outputs `level`, `msg`, and user
+attributes only. `slog.Record.Time` and `slog.Record.PC` are always ignored.
+`HandlerOptions.Replacer` transforms user attributes; it observes `level` and
+`msg`, but cannot remove or replace those built-in fields.
+
 ## Fields
 
 Typed field helpers are preferred when possible:

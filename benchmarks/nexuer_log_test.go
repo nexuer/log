@@ -65,3 +65,12 @@ func fakeNexuerLogFields() []log.Field {
 		log.Any("error", errExample),
 	}
 }
+
+func fakeNexuerLogFieldArgs() []any {
+	fields := fakeNexuerLogFields()
+	args := make([]any, len(fields))
+	for i := range fields {
+		args[i] = fields[i]
+	}
+	return args
+}

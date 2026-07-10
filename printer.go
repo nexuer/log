@@ -24,7 +24,7 @@ func NewPrinter(log *Logger) Printer {
 	if log == nil {
 		log = defaultLogger.Load()
 	} else {
-		log = log.WithContext(WithCallerDepth(log.ctx, 1))
+		log = log.WithContext(AddCallerDepth(log.ctx, 1))
 	}
 	return &printer{
 		logger: log,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 )
 
@@ -80,6 +81,19 @@ func (l *Logger) Writer() io.Writer {
 
 func (l *Logger) Context() context.Context {
 	return l.ctx
+}
+
+// SlogHandler returns a slog.Handler bound to the Logger's current output,
+// level, handler, accumulated fields, and groups.
+func (l *Logger) SlogHandler() slog.Handler {
+	switch h := l.handler.(type) {
+	case *jsonHandler:
+		return newSlogHandler(h.handler, l.Writer(), l.level, l.ctx)
+	case *textHandler:
+		return newSlogHandler(h.handler, l.Writer(), l.level, l.ctx)
+	default:
+		return &loggerSlogHandler{logger: l.clone()}
+	}
 }
 
 // SetLevel set the current minimum severity level for

@@ -62,16 +62,19 @@ func bytesToString(data []byte) string {
 func appendTextValue(s *handleState, v Value) error {
 	switch v.Kind() {
 	case KindSource:
-		if v.any != nil {
-			source := v.source()
-			_, _ = s.buf.WriteString(source.File)
-			_, _ = s.buf.WriteString(":")
-			*s.buf = strconv.AppendInt(*s.buf, int64(source.Line), 10)
+		if source, ok := v.callerSource(); ok {
+			appendTextSource(s, &source)
+		} else if v.any != nil {
+			appendTextSource(s, v.source())
 		} else {
 			_, _ = s.buf.WriteString("<nil>")
 		}
 	case KindString:
-		s.appendString(v.str())
+		if t, layout, ok := v.timestamp(); ok {
+			s.appendTimestamp(t, layout)
+		} else {
+			s.appendString(v.str())
+		}
 	case KindTime:
 		s.appendTime(v.time())
 	case KindAny:
@@ -103,4 +106,10 @@ func appendTextValue(s *handleState, v Value) error {
 		*s.buf = v.append(*s.buf)
 	}
 	return nil
+}
+
+func appendTextSource(s *handleState, source *Source) {
+	_, _ = s.buf.WriteString(source.File)
+	_, _ = s.buf.WriteString(":")
+	*s.buf = strconv.AppendInt(*s.buf, int64(source.Line), 10)
 }

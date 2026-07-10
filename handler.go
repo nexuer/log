@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"reflect"
 	"slices"
 	"strconv"
@@ -128,7 +129,7 @@ func (s *handleState) appendField(ctx context.Context, field Field, isPreformat 
 		if s.groups != nil {
 			gs = *s.groups
 		}
-		// a.Value is resolved before calling ReplaceAttr, so the user doesn't have to.
+		// The value is resolved before calling Replacer, so the user doesn't have to.
 		field = rep(ctx, gs, field)
 	}
 	// Elide empty Attrs.
@@ -192,7 +193,7 @@ type handleState struct {
 	freeBuf bool           // should buf be freed?
 	sep     string         // separator to write before next key
 	prefix  *buffer.Buffer // for text: key prefix
-	groups  *[]string      // pool-allocated slice of active groups, for ReplaceAttr
+	groups  *[]string      // pool-allocated slice of active groups, for Replacer
 }
 
 var groupPool = sync.Pool{New: func() any {
@@ -247,7 +248,7 @@ func (s *handleState) openGroup(name string) {
 		_, _ = s.prefix.WriteString(name)
 		_ = s.prefix.WriteByte(keyComponentSep)
 	}
-	// Collect group names for ReplaceAttr.
+	// Collect group names for Replacer.
 	if s.groups != nil {
 		*s.groups = append(*s.groups, name)
 	}
@@ -363,6 +364,23 @@ func (s *handleState) appendTime(t time.Time) {
 	}
 }
 
+func (s *handleState) appendTimestamp(t time.Time, layout string) {
+	if layout == time.RFC3339 || layout == time.RFC3339Nano {
+		if s.h.json {
+			s.appendByte('"')
+		}
+		*s.buf = t.AppendFormat(*s.buf, layout)
+		if s.h.json {
+			s.appendByte('"')
+		}
+		return
+	}
+	formatted := buffer.New()
+	defer formatted.Free()
+	*formatted = t.AppendFormat(*formatted, layout)
+	s.appendString(bytesToString(*formatted))
+}
+
 func appendRFC3339Millis(b []byte, t time.Time) []byte {
 	// Format according to time.RFC3339Nano since it is highly optimized,
 	// but truncate it to use millisecond resolution.
@@ -409,6 +427,13 @@ func (s *handleState) appendNonBuiltIns(ctx context.Context, kvs []any) {
 		nonEmpty := false
 		var a Field
 		for len(kvs) > 0 {
+			if attr, ok := kvs[0].(slog.Attr); ok {
+				kvs = kvs[1:]
+				if s.appendSlogAttr(ctx, attr) {
+					nonEmpty = true
+				}
+				continue
+			}
 			a, kvs = kvsToField(kvs)
 			if s.appendField(ctx, a, false) {
 				nonEmpty = true
@@ -428,9 +453,8 @@ func (s *handleState) appendNonBuiltIns(ctx context.Context, kvs []any) {
 	}
 }
 
-func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, msg string, kvs ...any) error {
+func (h *commonHandler) newRecordState(ctx context.Context, level, msg string) handleState {
 	state := h.newHandleState(buffer.New(), true, "")
-	defer state.free()
 
 	if h.json {
 		state.appendByte('{')
@@ -443,19 +467,18 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 	}
 	// Built-in attributes. They are not in a group.
 	stateGroups := state.groups
-	state.groups = nil // So ReplaceAttrs sees no groups instead of the pre groups.
+	state.groups = nil // Built-in fields are always outside user groups.
 	rep := h.opts.Replacer
 	// level
-	levelStr := level.String()
 	if rep != nil {
 		// ignore replace level
-		rep(ctx, nil, String(LevelKey, levelStr))
+		rep(ctx, nil, String(LevelKey, level))
 	}
 	if h.json {
 		state.appendKey(LevelKey)
-		state.appendString(levelStr)
+		state.appendString(level)
 	} else {
-		state.appendString(levelStr)
+		state.appendString(level)
 		state.sep = h.attrSep()
 	}
 
@@ -463,16 +486,16 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 	if rep != nil {
 		rep(ctx, nil, String(MessageKey, msg))
 	}
-
 	if msg != "" {
 		state.appendKey(MessageKey)
 		state.appendString(msg)
 	}
 
-	state.groups = stateGroups // Restore groups passed to ReplaceAttrs.
+	state.groups = stateGroups // Restore groups passed to Replacer.
+	return state
+}
 
-	state.appendNonBuiltIns(ctx, kvs)
-
+func (h *commonHandler) writeRecord(w io.Writer, state *handleState) error {
 	state.appendByte('\n')
 
 	if w == nil || w == io.Discard || w == Discard {
@@ -483,4 +506,12 @@ func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, ms
 	defer h.mu.Unlock()
 	_, err := w.Write(*state.buf)
 	return err
+}
+
+func (h *commonHandler) handle(ctx context.Context, w io.Writer, level Level, msg string, kvs ...any) error {
+	state := h.newRecordState(ctx, level.String(), msg)
+	defer state.free()
+
+	state.appendNonBuiltIns(ctx, kvs)
+	return h.writeRecord(w, &state)
 }

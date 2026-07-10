@@ -41,6 +41,15 @@ func newLogrus() *logrus.Logger {
 	}
 }
 
+func newLogrusText() *logrus.Logger {
+	return &logrus.Logger{
+		Out:       io.Discard,
+		Formatter: new(logrus.TextFormatter),
+		Hooks:     make(logrus.LevelHooks),
+		Level:     logrus.DebugLevel,
+	}
+}
+
 func fakeLogrusFields() logrus.Fields {
 	return logrus.Fields{
 		"int":     _tenInts[0],

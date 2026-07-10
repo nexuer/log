@@ -146,6 +146,18 @@ func newZapLogger(lvl zapcore.Level) *zap.Logger {
 	))
 }
 
+func newZapTextLogger(lvl zapcore.Level) *zap.Logger {
+	ec := zap.NewProductionEncoderConfig()
+	ec.EncodeDuration = zapcore.NanosDurationEncoder
+	ec.EncodeTime = zapcore.EpochNanosTimeEncoder
+	enc := zapcore.NewConsoleEncoder(ec)
+	return zap.New(zapcore.NewCore(
+		enc,
+		&Discarder{},
+		lvl,
+	))
+}
+
 func newSampledLogger(lvl zapcore.Level) *zap.Logger {
 	return zap.New(zapcore.NewSamplerWithOptions(
 		newZapLogger(zap.DebugLevel).Core(),

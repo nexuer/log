@@ -101,6 +101,23 @@ logger.InfoS("ready", "port", 8080)
 {"level":"INFO","logger":"server","service":"api","ts":"2026-06-26T17:30:00+08:00","msg":"ready","port":8080}
 ```
 
+### slog Handler
+
+可以在标准库 `log/slog` API 后使用 Nexuer handler：
+
+```go
+native := log.New(os.Stdout, log.Json(&log.HandlerOptions{Name: "server"})).
+	SetLevel(log.LevelInfo)
+logger := slog.New(native.SlogHandler())
+logger.Info("ready", "port", 8080)
+```
+
+`Logger.SlogHandler` 会保留 Logger 当前的输出、级别、handler、字段和
+group，只输出 `level`、`msg` 和用户字段。
+`slog.Record.Time` 和 `slog.Record.PC` 始终会被忽略。
+`HandlerOptions.Replacer` 可以转换用户字段；它能观察 `level` 和 `msg`，但不能删除或
+替换这两个内置字段。
+
 ## 字段
 
 推荐优先使用类型化字段：

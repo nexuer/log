@@ -29,6 +29,10 @@ func newSlog(fields ...slog.Attr) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, nil).WithAttrs(fields))
 }
 
+func newSlogText(fields ...slog.Attr) *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil).WithAttrs(fields))
+}
+
 func newDisabledSlog(fields ...slog.Attr) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}).WithAttrs(fields))
 }

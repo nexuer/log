@@ -1,6 +1,7 @@
 package log
 
 import (
+	"log/slog"
 	"time"
 )
 
@@ -114,6 +115,9 @@ func kvsToField(kvs []any) (Field, []any) {
 
 	case Field:
 		return x, kvs[1:]
+
+	case slog.Attr:
+		return slogAttrToField(x), kvs[1:]
 
 	default:
 		return Any(badKey, x), kvs[1:]

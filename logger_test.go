@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"reflect"
 	"testing"
 )
@@ -104,6 +105,69 @@ func TestLoggerWithGroupReplacerGroups(t *testing.T) {
 	logger.InfoS("done", "method", "GET")
 
 	wantCalls := []string{"id:request", "method:request"}
+	if !reflect.DeepEqual(calls, wantCalls) {
+		t.Fatalf("replacer calls = %#v, want %#v", calls, wantCalls)
+	}
+}
+
+func TestLoggerAcceptsSlogAttrs(t *testing.T) {
+	var buf bytes.Buffer
+	logger := New(&buf, Json()).With(
+		slog.String("service", "api"),
+		slog.Group("request",
+			slog.String("id", "req-1"),
+		),
+	)
+
+	logger.InfoS("done",
+		slog.String("method", "GET"),
+		slog.Int("status", 200),
+	)
+
+	want := `{"level":"INFO","msg":"done","service":"api","request":{"id":"req-1"},"method":"GET","status":200}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("json output = %q, want %q", got, want)
+	}
+}
+
+func TestLoggerAcceptsSlogAttrsWithGroup(t *testing.T) {
+	var buf bytes.Buffer
+	logger := New(&buf).WithGroup("request").With(
+		slog.String("id", "req-1"),
+	)
+
+	logger.InfoS("done",
+		slog.String("method", "GET"),
+		slog.Int("status", 200),
+	)
+
+	want := "INFO msg=done request.id=req-1 request.method=GET request.status=200\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("text output = %q, want %q", got, want)
+	}
+}
+
+func TestLoggerSlogAttrReplacerGroups(t *testing.T) {
+	var buf bytes.Buffer
+	var calls []string
+	logger := New(&buf, Json(&HandlerOptions{
+		Replacer: func(ctx context.Context, groups []string, field Field) Field {
+			if field.Key == LevelKey || field.Key == MessageKey {
+				return field
+			}
+			calls = append(calls, field.Key+":"+joinGroups(groups))
+			return field
+		},
+	})).WithGroup("request")
+
+	logger.InfoS("done",
+		slog.String("method", "GET"),
+		slog.Group("user",
+			slog.String("id", "u-1"),
+		),
+	)
+
+	wantCalls := []string{"method:request", "id:request.user"}
 	if !reflect.DeepEqual(calls, wantCalls) {
 		t.Fatalf("replacer calls = %#v, want %#v", calls, wantCalls)
 	}

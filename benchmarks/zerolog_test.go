@@ -30,6 +30,10 @@ func newZerolog() zerolog.Logger {
 	return zerolog.New(io.Discard).With().Timestamp().Logger()
 }
 
+func newZerologConsole() zerolog.Logger {
+	return zerolog.New(zerolog.ConsoleWriter{Out: io.Discard}).With().Timestamp().Logger()
+}
+
 func newDisabledZerolog() zerolog.Logger {
 	return newZerolog().Level(zerolog.Disabled)
 }

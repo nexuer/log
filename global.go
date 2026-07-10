@@ -43,13 +43,13 @@ func SetDefault(l *Logger) {
 	if l == nil {
 		return
 	}
-	defaultLogger.Store(l.WithContext(WithCallerDepth(l.ctx, 1)))
+	defaultLogger.Store(l.WithContext(AddCallerDepth(l.ctx, 1)))
 }
 
 // Default returns the default [Logger].
 func Default() *Logger {
 	logger := defaultLogger.Load()
-	return logger.WithContext(WithCallerDepth(logger.ctx, 0))
+	return logger.WithContext(AddCallerDepth(logger.ctx, 0))
 }
 
 func Close() error {

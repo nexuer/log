@@ -38,8 +38,15 @@ type Value struct {
 }
 
 type (
-	stringptr *byte  // used in Value.any when the Value is a string
-	groupptr  *Field // used in Value.any when the Value is a []Attr
+	stringptr     *byte  // used in Value.any when the Value is a string
+	groupptr      *Field // used in Value.any when the Value is a []Attr
+	timestampSpec struct {
+		layout   string
+		location *time.Location
+	}
+	callerSpec struct {
+		fullFilename bool
+	}
 )
 
 // Kind is the kind of a [Value].
@@ -95,6 +102,10 @@ func (v Value) Kind() Kind {
 // StringValue returns a new [Value] for a string.
 func StringValue(value string) Value {
 	return Value{kind: KindString, num: uint64(len(value)), any: stringptr(unsafe.StringData(value))}
+}
+
+func timestampStringValue(t time.Time, spec *timestampSpec) Value {
+	return Value{kind: KindString, num: uint64(t.UnixNano()), any: spec}
 }
 
 // IntValue returns a [Value] for an int.
@@ -301,7 +312,7 @@ func (v Value) Any() any {
 	case KindTime:
 		return v.time()
 	case KindSource:
-		return v.any
+		return v.Source()
 	default:
 		panic(fmt.Sprintf("bad kind: %s", v.Kind()))
 	}
@@ -319,7 +330,18 @@ func (v Value) String() string {
 }
 
 func (v Value) str() string {
+	if t, layout, ok := v.timestamp(); ok {
+		return t.Format(layout)
+	}
 	return unsafe.String(v.any.(stringptr), v.num)
+}
+
+func (v Value) timestamp() (time.Time, string, bool) {
+	spec, ok := v.any.(*timestampSpec)
+	if !ok {
+		return time.Time{}, "", false
+	}
+	return time.Unix(0, int64(v.num)).In(spec.location), spec.layout, true
 }
 
 // Int64 returns v's value as an int64. It panics
@@ -433,15 +455,39 @@ func (v Value) valuer() Valuer {
 }
 
 func (v Value) Source() *Source {
-	source, ok := v.any.(*Source)
-	if !ok {
-		panic(fmt.Sprintf("Value kind is %s, not %s", v.Kind(), KindSource))
+	if source, ok := v.any.(*Source); ok {
+		return source
 	}
-	return source
+	if source, ok := v.callerSource(); ok {
+		return &source
+	}
+	panic(fmt.Sprintf("Value kind is %s, not %s", v.Kind(), KindSource))
 }
 
 func (v Value) source() *Source {
-	return v.any.(*Source)
+	return v.Source()
+}
+
+func (v Value) callerSource() (Source, bool) {
+	spec, ok := v.any.(*callerSpec)
+	if !ok {
+		return Source{}, false
+	}
+	pc := uintptr(v.num)
+	fn := runtime.FuncForPC(pc)
+	if fn == nil {
+		return Source{}, true
+	}
+	file, line := fn.FileLine(pc)
+	if !spec.fullFilename {
+		idx := strings.LastIndexByte(file, '/')
+		if idx >= 0 {
+			if parent := strings.LastIndexByte(file[:idx], '/'); parent >= 0 {
+				file = file[parent+1:]
+			}
+		}
+	}
+	return Source{Function: fn.Name(), File: file, Line: line}, true
 }
 
 //////////////// Other
@@ -491,6 +537,9 @@ func (v Value) isEmptyGroup() bool {
 func (v Value) append(dst []byte) []byte {
 	switch v.Kind() {
 	case KindString:
+		if t, layout, ok := v.timestamp(); ok {
+			return t.AppendFormat(dst, layout)
+		}
 		return append(dst, v.str()...)
 	case KindInt64:
 		return strconv.AppendInt(dst, int64(v.num), 10)
@@ -584,18 +633,65 @@ func ResolveValuer(ctx context.Context, valuer Valuer) Value {
 }
 
 func Timestamp(layout string) Valuer {
+	spec := &timestampSpec{layout: layout, location: time.Local}
 	return func(ctx context.Context) Value {
-		return StringValue(time.Now().Format(layout))
+		return timestampStringValue(time.Now(), spec)
 	}
 }
 
 var callerDepthKey = struct{}{}
 
-func WithCallerDepth(ctx context.Context, depth int) context.Context {
+type callerDepthContext struct {
+	context.Context
+	depth int
+}
+
+func (c callerDepthContext) Value(key any) any {
+	if key == callerDepthKey {
+		return c.depth
+	}
+	return c.Context.Value(key)
+}
+
+// AddCallerDepth returns a context whose caller depth is increased by delta.
+// Logging wrappers should add one for each stack frame they introduce.
+func AddCallerDepth(ctx context.Context, delta int) context.Context {
 	if ctx == nil {
-		ctx = context.TODO()
+		ctx = context.Background()
+	}
+	if delta == 0 {
+		return ctx
+	}
+	depth := callerDepth(ctx) + delta
+	if depth < 0 {
+		depth = 0
 	}
 	return context.WithValue(ctx, callerDepthKey, depth)
+}
+
+func callerDepth(ctx context.Context) int {
+	if ctx == nil {
+		return 0
+	}
+	depth, _ := ctx.Value(callerDepthKey).(int)
+	return depth
+}
+
+func mergeCallerDepth(callCtx, loggerCtx context.Context) context.Context {
+	if callCtx == nil {
+		callCtx = context.Background()
+	}
+	depth := callerDepth(loggerCtx)
+	if depth == 0 {
+		return callCtx
+	}
+	if callCtx == context.Background() {
+		return loggerCtx
+	}
+	return callerDepthContext{
+		Context: callCtx,
+		depth:   callerDepth(callCtx) + depth,
+	}
 }
 
 func (s *Source) String() string {
@@ -615,65 +711,20 @@ func Caller(depth int, full ...bool) Valuer {
 	if len(full) > 0 && full[0] {
 		fullFilename = true
 	}
+	spec := &callerSpec{fullFilename: fullFilename}
 	return func(ctx context.Context) Value {
-		skip := depth
-		if ctx != nil {
-			if extraDepth, ok := ctx.Value(callerDepthKey).(int); ok && extraDepth > 0 {
-				skip += extraDepth
-			}
-		}
+		skip := depth + callerDepth(ctx)
 
-		pc, file, line, _ := runtime.Caller(skip)
-		fn := runtime.FuncForPC(pc)
-		var fnName string
-		if fn != nil {
-			fnName = fn.Name()
+		var pcs [1]uintptr
+		if runtime.Callers(skip+1, pcs[:]) == 0 {
+			return SourceValue(nil)
 		}
-		if fullFilename {
-			return SourceValue(&Source{
-				Function: fnName,
-				File:     file,
-				Line:     line,
-			})
+		// runtime.Callers returns a return PC. Move it into the call instruction
+		// so FuncForPC and FileLine identify the same frame as runtime.Caller.
+		pc := pcs[0]
+		if pc > 0 {
+			pc--
 		}
-		idx := strings.LastIndexByte(file, '/')
-		if idx == -1 {
-			return SourceValue(&Source{
-				Function: fnName,
-				File:     file[idx+1:],
-				Line:     line,
-			})
-		}
-		idx = strings.LastIndexByte(file[:idx], '/')
-		return SourceValue(&Source{
-			Function: fnName,
-			File:     file[idx+1:],
-			Line:     line,
-		})
+		return Value{kind: KindSource, num: uint64(pc), any: spec}
 	}
 }
-
-//func Caller(depth int, full ...bool) Valuer {
-//	fullFilename := false
-//	if len(full) > 0 && full[0] {
-//		fullFilename = true
-//	}
-//	return func(ctx context.Context) Value {
-//		skip := depth
-//		if ctx != nil {
-//			if extraDepth, ok := ctx.Value(callerDepthKey).(int); ok && extraDepth > 0 {
-//				skip += extraDepth
-//			}
-//		}
-//		_, file, line, _ := runtime.Caller(skip)
-//		if fullFilename {
-//			return StringValue(file + ":" + strconv.Itoa(line))
-//		}
-//		idx := strings.LastIndexByte(file, '/')
-//		if idx == -1 {
-//			return StringValue(file[idx+1:] + ":" + strconv.Itoa(line))
-//		}
-//		idx = strings.LastIndexByte(file[:idx], '/')
-//		return StringValue(file[idx+1:] + ":" + strconv.Itoa(line))
-//	}
-//}

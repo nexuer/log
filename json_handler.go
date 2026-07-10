@@ -1,7 +1,6 @@
 package log
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -59,21 +58,16 @@ func appendJSONTime(s *handleState, t time.Time) {
 func appendJSONValue(s *handleState, v Value) error {
 	switch v.Kind() {
 	case KindString:
-		s.appendString(v.str())
+		if t, layout, ok := v.timestamp(); ok {
+			s.appendTimestamp(t, layout)
+		} else {
+			s.appendString(v.str())
+		}
 	case KindSource:
-		if v.any != nil {
-			source := v.source()
-			_ = s.buf.WriteByte('{')
-			s.sep = ""
-			s.appendKey("function")
-			s.appendString(source.Function)
-			s.sep = s.h.attrSep()
-			s.appendKey("file")
-			s.appendString(source.File)
-			s.appendKey("line")
-			*s.buf = strconv.AppendInt(*s.buf, int64(source.Line), 10)
-			//s.appendString(strconv.Itoa(source.Line))
-			_ = s.buf.WriteByte('}')
+		if source, ok := v.callerSource(); ok {
+			appendJSONSource(s, &source)
+		} else if v.any != nil {
+			appendJSONSource(s, v.source())
 		} else {
 			_, _ = s.buf.WriteString("{}")
 		}
@@ -100,6 +94,8 @@ func appendJSONValue(s *handleState, v Value) error {
 		_, jm := a.(json.Marshaler)
 		if err, ok := a.(error); ok && !jm {
 			s.appendString(err.Error())
+		} else if appendJSONSlice(s, a) {
+			return nil
 		} else {
 			return appendJSONMarshal(s.buf, a)
 		}
@@ -109,16 +105,86 @@ func appendJSONValue(s *handleState, v Value) error {
 	return nil
 }
 
+func appendJSONSource(s *handleState, source *Source) {
+	_ = s.buf.WriteByte('{')
+	s.sep = ""
+	s.appendKey("function")
+	s.appendString(source.Function)
+	s.sep = s.h.attrSep()
+	s.appendKey("file")
+	s.appendString(source.File)
+	s.appendKey("line")
+	*s.buf = strconv.AppendInt(*s.buf, int64(source.Line), 10)
+	_ = s.buf.WriteByte('}')
+}
+
+func appendJSONSlice(s *handleState, value any) bool {
+	switch values := value.(type) {
+	case []int:
+		if values == nil {
+			_, _ = s.buf.WriteString("null")
+			return true
+		}
+		s.appendByte('[')
+		for i, value := range values {
+			if i > 0 {
+				s.appendByte(',')
+			}
+			*s.buf = strconv.AppendInt(*s.buf, int64(value), 10)
+		}
+		s.appendByte(']')
+		return true
+	case []string:
+		if values == nil {
+			_, _ = s.buf.WriteString("null")
+			return true
+		}
+		s.appendByte('[')
+		for i, value := range values {
+			if i > 0 {
+				s.appendByte(',')
+			}
+			s.appendString(value)
+		}
+		s.appendByte(']')
+		return true
+	case []time.Time:
+		if values == nil {
+			_, _ = s.buf.WriteString("null")
+			return true
+		}
+		for _, value := range values {
+			if year := value.Year(); year < 0 || year >= 10000 {
+				return false
+			}
+			_, offset := value.Zone()
+			if offset <= -24*60*60 || offset >= 24*60*60 {
+				return false
+			}
+		}
+		s.appendByte('[')
+		for i, value := range values {
+			if i > 0 {
+				s.appendByte(',')
+			}
+			appendJSONTime(s, value)
+		}
+		s.appendByte(']')
+		return true
+	default:
+		return false
+	}
+}
+
 func appendJSONMarshal(buf *buffer.Buffer, v any) error {
-	// Use a json.Encoder to avoid escaping HTML.
-	var bb bytes.Buffer
-	enc := json.NewEncoder(&bb)
+	start := buf.Len()
+	enc := json.NewEncoder(buf)
 	enc.SetEscapeHTML(false)
 	if err := enc.Encode(v); err != nil {
+		buf.SetLen(start)
 		return err
 	}
-	bs := bb.Bytes()
-	buf.Write(bs[:len(bs)-1]) // remove final newline
+	buf.SetLen(buf.Len() - 1) // remove Encoder.Encode's final newline
 	return nil
 }
 
