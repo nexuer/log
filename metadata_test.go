@@ -12,17 +12,17 @@ import (
 )
 
 func TestDefaultFieldsAreUsedAsReadOnlyTemplate(t *testing.T) {
-	beforeKeys := []any{DefaultFields[0], DefaultFields[2]}
+	beforeKeys := []string{DefaultFields[0].Key, DefaultFields[1].Key}
 	beforeValuers := []uintptr{
-		reflectValuerPointer(DefaultFields[1]),
-		reflectValuerPointer(DefaultFields[3]),
+		reflectValuerPointer(DefaultFields[0].Value.Valuer()),
+		reflectValuerPointer(DefaultFields[1].Value.Valuer()),
 	}
 	var buf bytes.Buffer
-	New(&buf, Json()).With(DefaultFields...).InfoS("done")
+	New(&buf, Json()).WithFields(DefaultFields...).InfoS("done")
 
-	if len(DefaultFields) != 4 || DefaultFields[0] != beforeKeys[0] || DefaultFields[2] != beforeKeys[1] ||
-		reflectValuerPointer(DefaultFields[1]) != beforeValuers[0] ||
-		reflectValuerPointer(DefaultFields[3]) != beforeValuers[1] {
+	if len(DefaultFields) != 2 || DefaultFields[0].Key != beforeKeys[0] || DefaultFields[1].Key != beforeKeys[1] ||
+		reflectValuerPointer(DefaultFields[0].Value.Valuer()) != beforeValuers[0] ||
+		reflectValuerPointer(DefaultFields[1].Value.Valuer()) != beforeValuers[1] {
 		t.Fatalf("DefaultFields changed: %#v", DefaultFields)
 	}
 	var record map[string]any
@@ -41,7 +41,7 @@ func TestGlobalLoggerCaller(t *testing.T) {
 	old := defaultLogger.Load()
 	defer defaultLogger.Store(old)
 	var buf bytes.Buffer
-	SetDefault(New(&buf, Json()).With(DefaultFields...))
+	SetDefault(New(&buf, Json()).WithFields(DefaultFields...))
 	Info("caller")
 	var record struct {
 		Caller Source `json:"caller"`

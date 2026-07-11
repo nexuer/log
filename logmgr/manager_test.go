@@ -27,7 +27,7 @@ func resetDefault(t *testing.T) {
 func TestSingletonManagerAPI(t *testing.T) {
 	resetDefault(t)
 
-	m := Init("server", WithLevel(log.LevelWarn))
+	m := Init("server", WithLevel(log.LevelWarn), WithFields(log.DefaultFields...))
 	if got := M(); got != m {
 		t.Fatal("M did not return the manager installed by Init")
 	}
@@ -224,7 +224,7 @@ func TestManagedPrinterCaller(t *testing.T) {
 		WithOutput(FileOutput),
 		WithFileDir(dir),
 		WithFormat(JsonFormat),
-		WithKeyValues(log.DefaultFields...),
+		WithFields(log.DefaultFields...),
 	)
 	m.Printer().Info("caller")
 	if err := m.Close(); err != nil {

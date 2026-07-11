@@ -755,6 +755,17 @@ func (s *Source) String() string {
 	return builder.String()
 }
 
+// Caller returns a Valuer that resolves to a Source from the current call stack.
+//
+// Depth is the base number of stack frames skipped from where the Valuer is
+// resolved, not a number relative to the application call to Logger. The
+// required base therefore depends on the logging path. Most Logger users should
+// use DefaultFields, whose caller depth is calibrated for Logger's APIs.
+// Logging wrappers should preserve that base and use AddCallerDepth to add one
+// for each wrapper frame they introduce.
+//
+// If full is true, Source.File contains the full filename. Otherwise it is
+// shortened to its final two path components.
 func Caller(depth int, full ...bool) Valuer {
 	fullFilename := false
 	if len(full) > 0 && full[0] {

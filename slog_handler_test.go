@@ -107,7 +107,7 @@ func TestSlogHandlerMergesCallerDepth(t *testing.T) {
 
 func TestSlogHandlerCaller(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(New(&buf, Json()).With(DefaultFields...).SlogHandler())
+	logger := slog.New(New(&buf, Json()).WithFields(DefaultFields...).SlogHandler())
 	logger.Info("caller")
 	var record struct {
 		Caller Source `json:"caller"`

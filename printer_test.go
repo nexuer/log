@@ -23,7 +23,7 @@ func callerFunction(t *testing.T, data []byte) string {
 
 func TestLoggerCaller(t *testing.T) {
 	var buf bytes.Buffer
-	log.New(&buf, log.Json()).With(log.DefaultFields...).Info("caller")
+	log.New(&buf, log.Json()).WithFields(log.DefaultFields...).Info("caller")
 	if function := callerFunction(t, buf.Bytes()); !strings.HasSuffix(function, ".TestLoggerCaller") {
 		t.Fatalf("caller function = %q, want TestLoggerCaller", function)
 	}
@@ -31,7 +31,7 @@ func TestLoggerCaller(t *testing.T) {
 
 func TestLoggerLogCaller(t *testing.T) {
 	var buf bytes.Buffer
-	logger := log.New(&buf, log.Json()).With(log.DefaultFields...)
+	logger := log.New(&buf, log.Json()).WithFields(log.DefaultFields...)
 	if err := logger.Log(context.Background(), log.LevelInfo, "caller"); err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +42,7 @@ func TestLoggerLogCaller(t *testing.T) {
 
 func TestPrinterCaller(t *testing.T) {
 	var buf bytes.Buffer
-	printer := log.NewPrinter(log.New(&buf, log.Json()).With(log.DefaultFields...))
+	printer := log.NewPrinter(log.New(&buf, log.Json()).WithFields(log.DefaultFields...))
 	printer.Info("caller")
 	if function := callerFunction(t, buf.Bytes()); !strings.HasSuffix(function, ".TestPrinterCaller") {
 		t.Fatalf("caller function = %q, want TestPrinterCaller", function)

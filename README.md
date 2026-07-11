@@ -175,15 +175,32 @@ logger := log.New(os.Stdout).WithFields(fields...)
 `Valuer` delays evaluation until the record is written:
 
 ```go
-logger := log.New(os.Stdout).With(
-	"ts", log.Timestamp(time.RFC3339),
-	"caller", log.Caller(1),
+logger := log.New(os.Stdout).WithFields(
+	log.Dynamic("ts", log.Timestamp(time.RFC3339)),
 )
 ```
 
-Timestamp and caller fields are opt-in for a logger: add them with `With`, or
-use `With(log.DefaultFields...)`. `DefaultFields` is a read-only package
-template and must not be mutated or modified concurrently.
+Timestamp and caller fields are opt-in. Use `DefaultFields` to add the standard
+timestamp and correctly calibrated caller field:
+
+```go
+logger := log.New(os.Stdout).WithFields(log.DefaultFields...)
+```
+
+`DefaultFields` is a read-only package template and must not be mutated or
+modified concurrently.
+
+`Caller(depth)` is a low-level constructor. Its `depth` counts stack frames from
+where the dynamic value is resolved, not from the application's logging call,
+so the correct base depends on the logging path. Most Logger users should use
+`DefaultFields`. A package that wraps logging calls should add one frame per
+wrapper with `AddCallerDepth`:
+
+```go
+func Info(ctx context.Context, logger *log.Logger, msg string) {
+	logger.Log(log.AddCallerDepth(ctx, 1), log.LevelInfo, msg)
+}
+```
 
 This is useful for timestamps, caller data, request-scoped values, and other
 values that should not be computed when `With` is called.
@@ -208,7 +225,7 @@ Use `Logger` instead of `Printer` when structured fields are needed.
 ## Global Logger
 
 ```go
-log.SetDefault(log.New(os.Stdout).With(log.DefaultFields...))
+log.SetDefault(log.New(os.Stdout).WithFields(log.DefaultFields...))
 
 log.Info("server starting")
 log.InfoS("server started", "addr", ":8080")

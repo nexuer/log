@@ -17,18 +17,11 @@ var (
 )
 
 var (
-	// DefaultCaller is a Valuer that returns the file and line.
-	// Adapters adjust this baseline through caller-depth context.
-	DefaultCaller = Caller(9)
-
-	// DefaultTimestamp is a Valuer that returns the current wallclock time.
-	DefaultTimestamp = Timestamp(time.RFC3339)
-
 	// DefaultFields is a read-only template for adding the default timestamp
 	// and caller fields. Callers must not mutate it or modify it concurrently.
-	DefaultFields = []any{
-		"ts", DefaultTimestamp,
-		"caller", DefaultCaller,
+	DefaultFields = []Field{
+		Dynamic("ts", Timestamp(time.RFC3339)),
+		Dynamic("caller", Caller(9)),
 	}
 )
 
@@ -37,7 +30,7 @@ var (
 )
 
 func init() {
-	SetDefault(New(os.Stderr).With(DefaultFields...))
+	SetDefault(New(os.Stderr).WithFields(DefaultFields...))
 }
 
 // SetDefault makes l the default [Logger], which is used by

@@ -24,7 +24,7 @@ func newDisabledNexuerTextLogger() *log.Logger {
 
 func fakeNexuerLogKvs(hasValuer ...bool) []any {
 	if len(hasValuer) > 0 && hasValuer[0] {
-		return append(log.DefaultFields, []any{
+		return append([]any{log.DefaultFields[0], log.DefaultFields[1]}, []any{
 			"int", _tenInts[0],
 			"ints", _tenInts,
 			"string", _tenStrings[0],

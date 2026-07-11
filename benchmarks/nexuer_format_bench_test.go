@@ -234,7 +234,7 @@ func BenchmarkNexuerAccumulatedFields(b *testing.B) {
 			return func() { logger.InfoS(getMessage(0)) }
 		}},
 		{"DefaultFields", func(h log.Handler) func() {
-			logger := log.New(io.Discard, h).With(log.DefaultFields...)
+			logger := log.New(io.Discard, h).WithFields(log.DefaultFields...)
 			return func() { logger.InfoS(getMessage(0)) }
 		}},
 		{"WithContext", func(h log.Handler) func() {

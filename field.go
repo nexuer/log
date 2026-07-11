@@ -74,6 +74,11 @@ func Group(key string, kvs ...any) Field {
 	return Field{key, GroupValue(kvsToFieldSlice(kvs)...)}
 }
 
+// Dynamic returns a Field whose value is evaluated for each log record.
+func Dynamic(key string, v Valuer) Field {
+	return Field{Key: key, Value: ValuerValue(v)}
+}
+
 // Any returns an Attr for the supplied value.
 // See [AnyValue] for how values are treated.
 func Any(key string, value any) Field {

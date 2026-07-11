@@ -165,14 +165,30 @@ logger := log.New(os.Stdout).WithFields(fields...)
 `Valuer` 会在真正写日志时才求值：
 
 ```go
-logger := log.New(os.Stdout).With(
-	"ts", log.Timestamp(time.RFC3339),
-	"caller", log.Caller(1),
+logger := log.New(os.Stdout).WithFields(
+	log.Dynamic("ts", log.Timestamp(time.RFC3339)),
 )
 ```
 
-Timestamp 和 Caller 对每个 Logger 都是显式启用的：通过 `With` 添加，或者使用
-`With(log.DefaultFields...)`。`DefaultFields` 是包提供的只读模板，不能修改，也不能并发修改。
+Timestamp 和 Caller 都需要显式启用。使用 `DefaultFields` 可以添加标准时间戳，以及
+已经按 Logger API 校准过的 Caller：
+
+```go
+logger := log.New(os.Stdout).WithFields(log.DefaultFields...)
+```
+
+`DefaultFields` 是包提供的只读模板，不能修改，也不能并发修改。
+
+`Caller(depth)` 是底层构造函数。`depth` 从动态值实际求值的位置开始计算栈帧，并非
+相对于业务代码调用 Logger 的位置，因此不同日志调用链需要不同的基础值。普通 Logger
+用户应直接使用 `DefaultFields`。封装日志调用的包应通过 `AddCallerDepth` 为每一层包装
+累加一层：
+
+```go
+func Info(ctx context.Context, logger *log.Logger, msg string) {
+	logger.Log(log.AddCallerDepth(ctx, 1), log.LevelInfo, msg)
+}
+```
 
 适合时间戳、调用位置、请求上下文等不应该在 `With` 时提前计算的字段。
 
@@ -195,7 +211,7 @@ _, _ = printer.Write([]byte("message from io.Writer"))
 ## 全局 Logger
 
 ```go
-log.SetDefault(log.New(os.Stdout).With(log.DefaultFields...))
+log.SetDefault(log.New(os.Stdout).WithFields(log.DefaultFields...))
 
 log.Info("server starting")
 log.InfoS("server started", "addr", ":8080")
