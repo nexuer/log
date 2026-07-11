@@ -139,7 +139,7 @@ func (l *Logger) Log(ctx context.Context, level Level, msg string, kvs ...any) e
 
 	if l.handler != nil {
 		// Log has one fewer wrapper frame than the level-specific methods.
-		return l.Handle(adjustCallerDepth(ctx, -1), l.w, level, msg, kvs...)
+		return l.Handle(AddCallerDepth(ctx, -1), l.w, level, msg, kvs...)
 	}
 	return nil
 }

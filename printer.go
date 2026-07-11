@@ -22,7 +22,7 @@ type printer struct {
 // If log is nil, it uses a default Logger from Default().
 func NewPrinter(log *Logger) Printer {
 	if log == nil {
-		log = defaultLogger.Load()
+		log = defaultLogger.Load().global
 	} else {
 		log = log.WithContext(AddCallerDepth(log.ctx, 1))
 	}

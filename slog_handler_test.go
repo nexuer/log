@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -125,6 +126,7 @@ func TestSlogHandlerMergesCallerDepth(t *testing.T) {
 func TestSlogHandlerCaller(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(NewSlogHandler(New(&buf, Json()).WithFields(DefaultFields...)))
+	_, _, line, _ := runtime.Caller(0)
 	logger.Info("caller")
 	var record struct {
 		Caller Source `json:"caller"`
@@ -134,6 +136,9 @@ func TestSlogHandlerCaller(t *testing.T) {
 	}
 	if !strings.HasSuffix(record.Caller.Function, ".TestSlogHandlerCaller") {
 		t.Fatalf("caller function = %q, want TestSlogHandlerCaller", record.Caller.Function)
+	}
+	if record.Caller.Line != line+1 {
+		t.Fatalf("caller line = %d, want %d", record.Caller.Line, line+1)
 	}
 }
 

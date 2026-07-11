@@ -681,23 +681,11 @@ func (c callerDepthContext) Value(key any) any {
 	return c.Context.Value(key)
 }
 
-// AddCallerDepth returns a context whose caller depth is increased by delta.
-// Logging wrappers should add one for each stack frame they introduce.
+// AddCallerDepth returns a context whose caller depth is adjusted by delta.
+// Logging wrappers should add one for each stack frame they introduce. A
+// negative delta can be used by adapters whose call path has fewer frames than
+// the standard Logger methods.
 func AddCallerDepth(ctx context.Context, delta int) context.Context {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if delta == 0 {
-		return ctx
-	}
-	depth := callerDepth(ctx) + delta
-	if depth < 0 {
-		depth = 0
-	}
-	return callerDepthContext{Context: ctx, depth: depth}
-}
-
-func adjustCallerDepth(ctx context.Context, delta int) context.Context {
 	if ctx == nil {
 		ctx = context.Background()
 	}

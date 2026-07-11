@@ -6,6 +6,7 @@ import (
 	"flag"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -226,6 +227,7 @@ func TestManagedPrinterCaller(t *testing.T) {
 		WithFormat(JsonFormat),
 		WithFields(log.DefaultFields...),
 	)
+	_, _, line, _ := runtime.Caller(0)
 	m.Printer().Info("caller")
 	if err := m.Close(); err != nil {
 		t.Fatal(err)
@@ -243,6 +245,9 @@ func TestManagedPrinterCaller(t *testing.T) {
 	}
 	if !strings.HasSuffix(record.Caller.Function, ".TestManagedPrinterCaller") {
 		t.Fatalf("caller function = %q, want TestManagedPrinterCaller", record.Caller.Function)
+	}
+	if record.Caller.Line != line+1 {
+		t.Fatalf("caller line = %d, want %d", record.Caller.Line, line+1)
 	}
 }
 

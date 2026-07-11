@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"reflect"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -37,11 +39,26 @@ func TestDefaultFieldsAreUsedAsReadOnlyTemplate(t *testing.T) {
 	}
 }
 
+func TestDefaultReturnsInstalledLogger(t *testing.T) {
+	old := defaultLogger.Load()
+	defer defaultLogger.Store(old)
+
+	logger := New(io.Discard)
+	SetDefault(logger)
+	if got := Default(); got != logger {
+		t.Fatalf("Default() = %p, want installed Logger %p", got, logger)
+	}
+	if got := Default(); got != logger {
+		t.Fatalf("second Default() = %p, want installed Logger %p", got, logger)
+	}
+}
+
 func TestGlobalLoggerCaller(t *testing.T) {
 	old := defaultLogger.Load()
 	defer defaultLogger.Store(old)
 	var buf bytes.Buffer
 	SetDefault(New(&buf, Json()).WithFields(DefaultFields...))
+	_, _, line, _ := runtime.Caller(0)
 	Info("caller")
 	var record struct {
 		Caller Source `json:"caller"`
@@ -51,6 +68,9 @@ func TestGlobalLoggerCaller(t *testing.T) {
 	}
 	if !strings.HasSuffix(record.Caller.Function, ".TestGlobalLoggerCaller") {
 		t.Fatalf("caller function = %q, want TestGlobalLoggerCaller", record.Caller.Function)
+	}
+	if record.Caller.Line != line+1 {
+		t.Fatalf("caller line = %d, want %d", record.Caller.Line, line+1)
 	}
 }
 
@@ -199,5 +219,13 @@ func TestAddCallerDepthAccumulatesWrappers(t *testing.T) {
 	source := callerDepthOuter(ctx).Source()
 	if !strings.HasSuffix(source.Function, ".callerDepthOuter") {
 		t.Fatalf("function = %q, want callerDepthOuter", source.Function)
+	}
+}
+
+func TestAddCallerDepthAllowsNegativeAdjustment(t *testing.T) {
+	ctx := AddCallerDepth(context.Background(), -2)
+	ctx = AddCallerDepth(ctx, 1)
+	if got := callerDepth(ctx); got != -1 {
+		t.Fatalf("caller depth = %d, want -1", got)
 	}
 }

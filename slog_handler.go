@@ -30,8 +30,7 @@ type slogHandler struct {
 // If logger is nil, NewSlogHandler uses the package default Logger.
 func NewSlogHandler(logger *Logger) slog.Handler {
 	if logger == nil {
-		logger = defaultLogger.Load()
-		logger = logger.WithContext(adjustCallerDepth(logger.ctx, -1))
+		logger = defaultLogger.Load().logger
 	}
 	switch h := logger.handler.(type) {
 	case *jsonHandler:
@@ -60,7 +59,7 @@ func (h *slogHandler) Enabled(_ context.Context, level slog.Level) bool {
 
 func (h *slogHandler) Handle(ctx context.Context, record slog.Record) error {
 	// slog reaches the handler two frames sooner than Logger's convenience methods.
-	ctx = adjustCallerDepth(mergeCallerDepth(ctx, h.ctx), -2)
+	ctx = AddCallerDepth(mergeCallerDepth(ctx, h.ctx), -2)
 	if h.lazy {
 		return h.handleLazy(ctx, record)
 	}
@@ -263,7 +262,7 @@ func (h *loggerSlogHandler) Handle(ctx context.Context, record slog.Record) erro
 	if h.logger.handler == nil || !h.logger.level.Enable(Level(record.Level)) {
 		return nil
 	}
-	ctx = adjustCallerDepth(mergeCallerDepth(ctx, h.logger.ctx), -2)
+	ctx = AddCallerDepth(mergeCallerDepth(ctx, h.logger.ctx), -2)
 	handler := h.logger.handler
 	nGroups := 0
 	for _, segment := range h.segments {

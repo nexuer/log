@@ -4,13 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/nexuer/log"
 )
 
-func callerFunction(t *testing.T, data []byte) string {
+func callerSource(t *testing.T, data []byte) log.Source {
 	t.Helper()
 	var record struct {
 		Caller log.Source `json:"caller"`
@@ -18,34 +19,41 @@ func callerFunction(t *testing.T, data []byte) string {
 	if err := json.Unmarshal(data, &record); err != nil {
 		t.Fatal(err)
 	}
-	return record.Caller.Function
+	return record.Caller
 }
 
 func TestLoggerCaller(t *testing.T) {
 	var buf bytes.Buffer
-	log.New(&buf, log.Json()).WithFields(log.DefaultFields...).Info("caller")
-	if function := callerFunction(t, buf.Bytes()); !strings.HasSuffix(function, ".TestLoggerCaller") {
-		t.Fatalf("caller function = %q, want TestLoggerCaller", function)
+	logger := log.New(&buf, log.Json()).WithFields(log.DefaultFields...)
+	_, _, line, _ := runtime.Caller(0)
+	logger.Info("caller")
+	caller := callerSource(t, buf.Bytes())
+	if !strings.HasSuffix(caller.Function, ".TestLoggerCaller") || caller.Line != line+1 {
+		t.Fatalf("caller = %s:%d (%s), want line %d in TestLoggerCaller", caller.File, caller.Line, caller.Function, line+1)
 	}
 }
 
 func TestLoggerLogCaller(t *testing.T) {
 	var buf bytes.Buffer
 	logger := log.New(&buf, log.Json()).WithFields(log.DefaultFields...)
+	_, _, line, _ := runtime.Caller(0)
 	if err := logger.Log(context.Background(), log.LevelInfo, "caller"); err != nil {
 		t.Fatal(err)
 	}
-	if function := callerFunction(t, buf.Bytes()); !strings.HasSuffix(function, ".TestLoggerLogCaller") {
-		t.Fatalf("caller function = %q, want TestLoggerLogCaller", function)
+	caller := callerSource(t, buf.Bytes())
+	if !strings.HasSuffix(caller.Function, ".TestLoggerLogCaller") || caller.Line != line+1 {
+		t.Fatalf("caller = %s:%d (%s), want line %d in TestLoggerLogCaller", caller.File, caller.Line, caller.Function, line+1)
 	}
 }
 
 func TestPrinterCaller(t *testing.T) {
 	var buf bytes.Buffer
 	printer := log.NewPrinter(log.New(&buf, log.Json()).WithFields(log.DefaultFields...))
+	_, _, line, _ := runtime.Caller(0)
 	printer.Info("caller")
-	if function := callerFunction(t, buf.Bytes()); !strings.HasSuffix(function, ".TestPrinterCaller") {
-		t.Fatalf("caller function = %q, want TestPrinterCaller", function)
+	caller := callerSource(t, buf.Bytes())
+	if !strings.HasSuffix(caller.Function, ".TestPrinterCaller") || caller.Line != line+1 {
+		t.Fatalf("caller = %s:%d (%s), want line %d in TestPrinterCaller", caller.File, caller.Line, caller.Function, line+1)
 	}
 }
 
