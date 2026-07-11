@@ -67,10 +67,10 @@ Text output:
 JSON output with JSON format enabled:
 
 ```json
-{"level":"INFO","msg":"server started","logger":"server","service":"api"}
-{"level":"INFO","msg":"job 42 started","logger":"server.worker","service":"api"}
-{"level":"WARN","msg":"database latency is high","logger":"db","service":"api"}
-{"level":"ERROR","msg":"query failed","logger":"db.mysql","service":"api"}
+{"logger":"server","level":"INFO","service":"api","msg":"server started"}
+{"logger":"server.worker","level":"INFO","service":"api","msg":"job 42 started"}
+{"logger":"db","level":"WARN","service":"api","msg":"database latency is high"}
+{"logger":"db.mysql","level":"ERROR","service":"api","msg":"query failed"}
 ```
 
 ## Core API
@@ -184,6 +184,10 @@ logmgr.WithReplacer(replacer)
 
 `Apply` updates an existing scope configuration and reapplies it to printers
 already created in that scope.
+
+Previously returned `Printer` values are stable references: they observe the
+new configuration after `Apply`. Logging through those printers may run
+concurrently with `Apply`.
 
 ```go
 logmgr.M().Apply(logmgr.WithOutput(logmgr.StdoutOutput))       // default scope

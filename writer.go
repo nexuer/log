@@ -17,9 +17,7 @@ func (w writerWrapper) Close() error {
 	return nil
 }
 
-// addWriteCloser converts an io.Writer to a WriteSyncer. It attempts to be
-// intelligent: if the concrete type of the io.Writer implements WriteSyncer,
-// we'll use the existing Sync method. If it doesn't, we'll add a no-op Sync.
+// addWriteCloser preserves an io.WriteCloser and otherwise adds a no-op Close.
 func addWriteCloser(w io.Writer) io.WriteCloser {
 	if w == nil {
 		return nil
@@ -104,8 +102,8 @@ type tryMultiWriter struct {
 // Write attempts to write p to all underlying writers, collecting any errors.
 // The returned byte count is determined by the byteCountStrategy:
 // - StrategyFirst: first writer's byte count.
-// - StrategyMinSuccess: minimum byte count among successful writes.
-// - StrategyMaxSuccess: maximum byte count among successful writes.
+// - StrategyMin: minimum byte count among writes.
+// - StrategyMax: maximum byte count among writes.
 func (t *tryMultiWriter) Write(p []byte) (n int, err error) {
 	var errs []error
 	firstN := 0

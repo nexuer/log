@@ -152,7 +152,8 @@ func (l *Logger) Log(ctx context.Context, level Level, msg string, kvs ...any) e
 	}
 
 	if l.handler != nil {
-		return l.Handle(ctx, l.w, level, msg, kvs...)
+		// Log has one fewer wrapper frame than the level-specific methods.
+		return l.Handle(adjustCallerDepth(ctx, -1), l.w, level, msg, kvs...)
 	}
 	return nil
 }
@@ -254,7 +255,7 @@ func (l *Logger) Error(args ...any) {
 	errorHandler(err)
 }
 
-// Errorf logs a message at warn level.
+// Errorf logs a formatted message at error level.
 func (l *Logger) Errorf(format string, args ...any) {
 	err := l.log(LevelError, format, args)
 	errorHandler(err)
@@ -274,7 +275,7 @@ func (l *Logger) Fatal(args ...any) {
 	exitFunc(1)
 }
 
-// Fatalf logs a message at warn level.
+// Fatalf logs a formatted message at fatal level.
 func (l *Logger) Fatalf(format string, args ...any) {
 	err := l.log(LevelFatal, format, args)
 	errorHandler(err)

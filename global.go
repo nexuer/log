@@ -18,7 +18,8 @@ var (
 
 var (
 	// DefaultCaller is a Valuer that returns the file and line.
-	DefaultCaller = Caller(7)
+	// Adapters adjust this baseline through caller-depth context.
+	DefaultCaller = Caller(9)
 
 	// DefaultTimestamp is a Valuer that returns the current wallclock time.
 	DefaultTimestamp = Timestamp(time.RFC3339)

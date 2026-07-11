@@ -78,7 +78,7 @@ func TestSlogHandlerPreservesLoggerState(t *testing.T) {
 	logger.Info("ignored")
 	logger.Warn("done", "id", "req-1")
 
-	want := `{"level":"WARN","msg":"done","logger":"server","service":"api","request":{"id":"req-1"}}` + "\n"
+	want := `{"logger":"server","level":"WARN","service":"api","msg":"done","request":{"id":"req-1"}}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
@@ -98,10 +98,25 @@ func TestSlogHandlerMergesCallerDepth(t *testing.T) {
 	logger.LogAttrs(AddCallerDepth(context.Background(), 3), slog.LevelInfo, "merged-depth")
 
 	want := "" +
-		`{"level":"INFO","msg":"native-depth","depth":2}` + "\n" +
-		`{"level":"INFO","msg":"merged-depth","depth":5}` + "\n"
+		`{"level":"INFO","depth":0,"msg":"native-depth"}` + "\n" +
+		`{"level":"INFO","depth":3,"msg":"merged-depth"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestSlogHandlerCaller(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(New(&buf, Json()).With(DefaultFields...).SlogHandler())
+	logger.Info("caller")
+	var record struct {
+		Caller Source `json:"caller"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(record.Caller.Function, ".TestSlogHandlerCaller") {
+		t.Fatalf("caller function = %q, want TestSlogHandlerCaller", record.Caller.Function)
 	}
 }
 
@@ -123,7 +138,29 @@ func TestSlogHandlerAdaptsCustomHandler(t *testing.T) {
 	logger := slog.New(native.SlogHandler()).WithGroup("request")
 	logger.Info("done", "id", 42)
 
-	want := `{"level":"INFO","msg":"done","service":"api","request":{"id":42}}` + "\n"
+	want := `{"level":"INFO","service":"api","msg":"done","request":{"id":42}}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestCustomSlogHandlerResolvesWithAttrsLogValuerLazily(t *testing.T) {
+	var buf bytes.Buffer
+	valuer := new(countingSlogValuer)
+	logger := slog.New(New(&buf, wrappedHandler{Handler: Json()}).SlogHandler()).
+		With("dynamic", valuer)
+	if got := valuer.Calls(); got != 0 {
+		t.Fatalf("LogValuer calls after With = %d, want 0", got)
+	}
+
+	logger.Info("first")
+	logger.Info("second")
+	if got := valuer.Calls(); got != 2 {
+		t.Fatalf("LogValuer calls = %d, want 2", got)
+	}
+	want := "" +
+		`{"level":"INFO","dynamic":{"count":1},"msg":"first"}` + "\n" +
+		`{"level":"INFO","dynamic":{"count":2},"msg":"second"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
@@ -138,7 +175,7 @@ func TestSlogHandlerWithAttrsAndGroups(t *testing.T) {
 		WithGroup("user")
 	logger.LogAttrs(context.Background(), slog.LevelInfo, "login", slog.Int("id", 42))
 
-	want := `{"level":"INFO","msg":"login","service":"api","request":{"id":"req-1","user":{"id":42}}}` + "\n"
+	want := `{"level":"INFO","service":"api","request":{"id":"req-1","user":{"id":42}},"msg":"login"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
@@ -176,8 +213,8 @@ func TestSlogHandlerResolvesWithAttrsLogValuerLazily(t *testing.T) {
 		t.Fatalf("LogValuer calls = %d, want 2", got)
 	}
 	want := "" +
-		`{"level":"INFO","msg":"first","dynamic":{"count":1}}` + "\n" +
-		`{"level":"INFO","msg":"second","dynamic":{"count":2}}` + "\n"
+		`{"level":"INFO","dynamic":{"count":1},"msg":"first"}` + "\n" +
+		`{"level":"INFO","dynamic":{"count":2},"msg":"second"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
@@ -193,7 +230,7 @@ func TestSlogHandlerLazyPathPreservesPriorAttrsAndGroups(t *testing.T) {
 		WithGroup("user")
 	logger.Info("done", "id", 42)
 
-	want := `{"level":"INFO","msg":"done","service":"api","request":{"dynamic":{"count":1},"user":{"id":42}}}` + "\n"
+	want := `{"level":"INFO","service":"api","request":{"dynamic":{"count":1},"user":{"id":42}},"msg":"done"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
@@ -211,7 +248,7 @@ func TestSlogHandlerLazyPathContinuesNativeGroups(t *testing.T) {
 		WithGroup("user")
 	logger.Info("done", "id", 42)
 
-	want := `{"level":"INFO","msg":"done","service":"api","request":{"request_id":"req-1","dynamic":{"count":1},"user":{"id":42}}}` + "\n"
+	want := `{"level":"INFO","service":"api","request":{"request_id":"req-1","dynamic":{"count":1},"user":{"id":42}},"msg":"done"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
@@ -251,6 +288,23 @@ func TestSlogHandlerReplacerCanDeleteBuiltIns(t *testing.T) {
 	}
 }
 
+func TestSlogHandlerOmitsWithGroupEmptiedByReplacer(t *testing.T) {
+	var buf bytes.Buffer
+	replacer := func(_ context.Context, _ []string, field Field) Field {
+		if field.Key == "secret" {
+			return Field{}
+		}
+		return field
+	}
+	logger := slog.New(New(&buf, Json(&HandlerOptions{Replacer: replacer})).SlogHandler()).
+		With(slog.Group("credentials", slog.String("secret", "token")))
+	logger.Info("done", "id", 1)
+	want := `{"level":"INFO","msg":"done","id":1}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
 func TestSlogHandlerNameWithLazyAttrs(t *testing.T) {
 	var buf bytes.Buffer
 	valuer := new(countingSlogValuer)
@@ -259,7 +313,7 @@ func TestSlogHandlerNameWithLazyAttrs(t *testing.T) {
 		With("dynamic", valuer)
 	logger.Info("done", "id", 42)
 
-	want := `{"level":"INFO","msg":"done","logger":"server","service":"api","dynamic":{"count":1},"id":42}` + "\n"
+	want := `{"logger":"server","level":"INFO","service":"api","dynamic":{"count":1},"msg":"done","id":42}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
@@ -274,7 +328,7 @@ func TestSlogHandlerOwnsWithAttrsSlice(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	want := `{"level":"INFO","msg":"done","service":"api"}` + "\n"
+	want := `{"level":"INFO","service":"api","msg":"done"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}

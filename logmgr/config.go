@@ -79,10 +79,16 @@ func (c *config) writer(name string, current io.Writer) (io.Writer, string) {
 	switch *c.Output {
 	case FileOutput:
 		path := filepath.Join(*c.File.Dir, name+".log")
+		newPath := path
 		if f, ok := current.(*lumberjack.Logger); ok && f.Filename == path {
-			return current, ""
+			if f.MaxSize == int(*c.File.Size) &&
+				f.MaxBackups == int(*c.File.Backups) &&
+				f.Compress == *c.File.Compress {
+				return f, ""
+			}
+			newPath = ""
 		}
-		return log.FileWriter(path, *c.File.Size, *c.File.Backups, *c.File.Compress), path
+		return log.FileWriter(path, *c.File.Size, *c.File.Backups, *c.File.Compress), newPath
 	case StdoutOutput:
 		return os.Stdout, ""
 	default:

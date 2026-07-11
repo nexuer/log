@@ -2,12 +2,29 @@ package log
 
 import (
 	"bytes"
+	"context"
+	"errors"
+	"io"
 	"testing"
 )
 
 type closeBuffer struct {
 	bytes.Buffer
 	closed bool
+}
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) {
+	return len(p) - 1, nil
+}
+
+func TestLoggerReportsShortWrite(t *testing.T) {
+	logger := New(shortWriter{})
+	err := logger.Log(context.Background(), LevelInfo, "short")
+	if !errors.Is(err, io.ErrShortWrite) {
+		t.Fatalf("Log error = %v, want %v", err, io.ErrShortWrite)
+	}
 }
 
 func (b *closeBuffer) Close() error {

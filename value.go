@@ -608,7 +608,7 @@ func (v Value) Resolve(ctx context.Context) (rv Value) {
 		}
 		valuer := v.Valuer()
 		if valuer == nil {
-			return v
+			return AnyValue(nil)
 		}
 		v = ResolveValuer(ctx, valuer)
 	}
@@ -664,6 +664,11 @@ func Timestamp(layout string) Valuer {
 
 var callerDepthKey = struct{}{}
 
+var (
+	backgroundCallerDepthMinus1 context.Context = callerDepthContext{Context: context.Background(), depth: -1}
+	backgroundCallerDepthMinus2 context.Context = callerDepthContext{Context: context.Background(), depth: -2}
+)
+
 type callerDepthContext struct {
 	context.Context
 	depth int
@@ -689,7 +694,25 @@ func AddCallerDepth(ctx context.Context, delta int) context.Context {
 	if depth < 0 {
 		depth = 0
 	}
-	return context.WithValue(ctx, callerDepthKey, depth)
+	return callerDepthContext{Context: ctx, depth: depth}
+}
+
+func adjustCallerDepth(ctx context.Context, delta int) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if delta == 0 {
+		return ctx
+	}
+	if ctx == context.Background() {
+		switch delta {
+		case -1:
+			return backgroundCallerDepthMinus1
+		case -2:
+			return backgroundCallerDepthMinus2
+		}
+	}
+	return callerDepthContext{Context: ctx, depth: callerDepth(ctx) + delta}
 }
 
 func callerDepth(ctx context.Context) int {
@@ -740,6 +763,9 @@ func Caller(depth int, full ...bool) Valuer {
 	spec := &callerSpec{fullFilename: fullFilename}
 	return func(ctx context.Context) Value {
 		skip := depth + callerDepth(ctx)
+		if skip < 0 {
+			skip = 0
+		}
 
 		var pcs [1]uintptr
 		if runtime.Callers(skip+1, pcs[:]) == 0 {

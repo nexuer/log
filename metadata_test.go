@@ -37,6 +37,23 @@ func TestDefaultFieldsAreUsedAsReadOnlyTemplate(t *testing.T) {
 	}
 }
 
+func TestGlobalLoggerCaller(t *testing.T) {
+	old := defaultLogger.Load()
+	defer defaultLogger.Store(old)
+	var buf bytes.Buffer
+	SetDefault(New(&buf, Json()).With(DefaultFields...))
+	Info("caller")
+	var record struct {
+		Caller Source `json:"caller"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(record.Caller.Function, ".TestGlobalLoggerCaller") {
+		t.Fatalf("caller function = %q, want TestGlobalLoggerCaller", record.Caller.Function)
+	}
+}
+
 func reflectValuerPointer(value any) uintptr {
 	return reflect.ValueOf(value).Pointer()
 }
@@ -73,6 +90,32 @@ func TestTimestampValuePreservesFormattingAndEscaping(t *testing.T) {
 
 	if got := valuer(context.Background()).String(); got != want {
 		t.Fatalf("Value.String() = %q, want %q", got, want)
+	}
+}
+
+func TestInvalidTimeRemainsValidJSON(t *testing.T) {
+	tests := []struct {
+		name  string
+		value time.Time
+	}{
+		{name: "year", value: time.Date(10000, 1, 1, 0, 0, 0, 0, time.UTC)},
+		{name: "zone", value: time.Date(2026, 1, 1, 0, 0, 0, 0, time.FixedZone("invalid", 24*60*60))},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			New(&buf, Json()).InfoS("done", "value", test.value)
+			if !json.Valid(buf.Bytes()) {
+				t.Fatalf("invalid JSON: %q", buf.String())
+			}
+			var record map[string]any
+			if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := record["value"].(string); !ok || !strings.HasPrefix(got, "!ERROR:") {
+				t.Fatalf("value = %#v, want encoded error", record["value"])
+			}
+		})
 	}
 }
 

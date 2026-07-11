@@ -3,6 +3,7 @@ package logmgr
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"sync"
@@ -162,13 +163,14 @@ func (m *Manager) Scopes() []*Scope {
 
 // Close closes all printers managed by m.
 func (m *Manager) Close() error {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	var errs []error
 	for _, scope := range m.scopes {
-		for _, v := range scope.entries {
-			if err := v.logger.Close(); err != nil && !errors.Is(err, os.ErrClosed) {
+		for name, v := range scope.entries {
+			makeDefault := scope.manager.isDefaultScope(scope.name) && name == scope.name
+			if err := v.close(makeDefault); err != nil && !errors.Is(err, os.ErrClosed) {
 				errs = append(errs, err)
 			}
 		}
@@ -178,22 +180,135 @@ func (m *Manager) Close() error {
 
 type entry struct {
 	logger  *log.Logger
-	printer log.Printer
+	printer *managedPrinter
 }
 
-func (e *entry) apply(name string, cfg *config) {
-	e.logger.SetLevel(*cfg.Level)
+func (e *entry) apply(name string, cfg *config, makeDefault bool) {
 	h := cfg.handler(name)
 	if len(cfg.Fields) > 0 {
 		h = h.WithFields(e.logger.Context(), cfg.Fields...)
 	}
-	e.logger.SetHandler(h)
-	w, newPath := cfg.writer(name, e.logger.Writer())
-	if newPath != "" {
-		e.logger.Infof("log output redirected to %s", newPath)
+
+	if e.printer != nil {
+		e.printer.mu.Lock()
+		defer e.printer.mu.Unlock()
 	}
-	e.logger.SetOutput(w)
-	e.printer = log.NewPrinter(e.logger)
+	oldWriter := e.logger.Writer()
+	w, newPath := cfg.writer(name, oldWriter)
+	if newPath != "" {
+		log.New(oldWriter, h).SetLevel(*cfg.Level).Infof("log output redirected to %s", newPath)
+	}
+	next := log.New(w, h).SetLevel(*cfg.Level).WithContext(e.logger.Context())
+	// managedPrinter adds one wrapper frame around log.Printer.
+	printerLogger := next.WithContext(log.AddCallerDepth(next.Context(), 1))
+	nextPrinter := log.NewPrinter(printerLogger)
+	if e.printer == nil {
+		e.printer = &managedPrinter{printer: nextPrinter}
+	} else {
+		e.printer.printer = nextPrinter
+	}
+	e.logger = next
+	if makeDefault {
+		log.SetDefault(next)
+	}
+	if oldWriter != w {
+		reportCloseError(closeWriter(oldWriter))
+	}
+}
+
+func (e *entry) close(makeDefault bool) error {
+	if e.printer != nil {
+		e.printer.mu.Lock()
+		defer e.printer.mu.Unlock()
+	}
+	oldWriter := e.logger.Writer()
+	discard := log.New(io.Discard)
+	e.logger = discard
+	if e.printer == nil {
+		e.printer = &managedPrinter{printer: log.NewPrinter(discard)}
+	} else {
+		e.printer.printer = log.NewPrinter(discard)
+	}
+	if makeDefault {
+		log.SetDefault(discard)
+	}
+	return closeWriter(oldWriter)
+}
+
+func closeWriter(w io.Writer) error {
+	if w == nil || w == os.Stdout || w == os.Stderr || w == io.Discard || w == log.Discard {
+		return nil
+	}
+	if closer, ok := w.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+func reportCloseError(err error) {
+	if err == nil || errors.Is(err, os.ErrClosed) || log.ErrorHandler == nil {
+		return
+	}
+	log.ErrorHandler(fmt.Errorf("logmgr: close previous output: %w", err))
+}
+
+type managedPrinter struct {
+	mu      sync.RWMutex
+	printer log.Printer
+}
+
+func (p *managedPrinter) Debug(args ...any) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	p.printer.Debug(args...)
+}
+
+func (p *managedPrinter) Debugf(format string, args ...any) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	p.printer.Debugf(format, args...)
+}
+
+func (p *managedPrinter) Info(args ...any) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	p.printer.Info(args...)
+}
+
+func (p *managedPrinter) Infof(format string, args ...any) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	p.printer.Infof(format, args...)
+}
+
+func (p *managedPrinter) Warn(args ...any) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	p.printer.Warn(args...)
+}
+
+func (p *managedPrinter) Warnf(format string, args ...any) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	p.printer.Warnf(format, args...)
+}
+
+func (p *managedPrinter) Error(args ...any) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	p.printer.Error(args...)
+}
+
+func (p *managedPrinter) Errorf(format string, args ...any) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	p.printer.Errorf(format, args...)
+}
+
+func (p *managedPrinter) Write(data []byte) (int, error) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.printer.Write(data)
 }
 
 // Scope is a named configuration scope. Printers in the same scope share the
@@ -234,8 +349,7 @@ func (s *Scope) apply(force bool, opts ...Option) {
 	s.config = applyConfig(s.config, opts, s.manager.flagConfigs(s.name)...)
 
 	for k, v := range s.entries {
-		v.apply(k, s.config)
-		s.setDefaultLogger(k, v)
+		v.apply(k, s.config, s.isDefaultEntry(k))
 	}
 }
 
@@ -291,14 +405,11 @@ func (s *Scope) upsertEntryLocked(name string) *entry {
 		}
 	}
 
-	e.apply(name, s.config)
+	e.apply(name, s.config, s.isDefaultEntry(name))
 	s.entries[name] = e
-	s.setDefaultLogger(name, e)
 	return e
 }
 
-func (s *Scope) setDefaultLogger(name string, e *entry) {
-	if s.manager.isDefaultScope(s.name) && name == s.name {
-		log.SetDefault(e.logger)
-	}
+func (s *Scope) isDefaultEntry(name string) bool {
+	return s.manager.isDefaultScope(s.name) && name == s.name
 }

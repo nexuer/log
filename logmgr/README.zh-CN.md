@@ -66,10 +66,10 @@ func main() {
 启用 JSON 格式后的输出：
 
 ```json
-{"level":"INFO","msg":"server started","logger":"server","service":"api"}
-{"level":"INFO","msg":"job 42 started","logger":"server.worker","service":"api"}
-{"level":"WARN","msg":"database latency is high","logger":"db","service":"api"}
-{"level":"ERROR","msg":"query failed","logger":"db.mysql","service":"api"}
+{"logger":"server","level":"INFO","service":"api","msg":"server started"}
+{"logger":"server.worker","level":"INFO","service":"api","msg":"job 42 started"}
+{"logger":"db","level":"WARN","service":"api","msg":"database latency is high"}
+{"logger":"db.mysql","level":"ERROR","service":"api","msg":"query failed"}
 ```
 
 ## 核心 API
@@ -176,6 +176,9 @@ logmgr.WithReplacer(replacer)
 ## 运行时调整
 
 `Apply` 会更新已有 scope 的配置，并把新配置重新应用到该 scope 已创建的 printer 上。
+
+此前返回的 `Printer` 是稳定引用：`Apply` 后会观察到新配置，并且可以与 `Apply`
+并发写日志。
 
 ```go
 logmgr.M().Apply(logmgr.WithOutput(logmgr.StdoutOutput))       // 默认 scope

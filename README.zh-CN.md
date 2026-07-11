@@ -98,7 +98,7 @@ logger.InfoS("ready", "port", 8080)
 输出：
 
 ```json
-{"level":"INFO","logger":"server","service":"api","ts":"2026-06-26T17:30:00+08:00","msg":"ready","port":8080}
+{"logger":"server","level":"INFO","service":"api","ts":"2026-06-26T17:30:00+08:00","msg":"ready","port":8080}
 ```
 
 ### slog Handler
@@ -139,6 +139,9 @@ logger.InfoS("user login", "user", "alice", "attempt", 1)
 `With`、`Fields` 和结构化日志方法可以在同一个参数列表中混用类型化 `Field`、
 `slog.Attr`、普通键值对、group 和延迟求值的 `Valuer`，输出顺序与参数顺序一致。
 没有配对 value 的参数会使用 `<BAD_KEY>` 作为 key 输出。
+
+每条记录按 logger name、level、`With` 累计字段、msg、本次日志调用字段的顺序输出。
+如果 JSON group 同时包含累计字段和本次调用字段，会保持为单一对象，msg 放在该对象之后。
 
 允许重复 key，包括 `level`、`msg` 和 `logger`。Text 会保留每一次出现；JSON
 因此可能包含重复的对象成员。很多 JSON 解析器会保留最后一个值，但这取决于解析器实现；

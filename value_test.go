@@ -301,6 +301,14 @@ func TestValuer(t *testing.T) {
 	}
 }
 
+func TestNilValuerResolve(t *testing.T) {
+	var valuer Valuer
+	resolved := ValuerValue(valuer).Resolve(context.Background())
+	if resolved.Kind() != KindAny || resolved.Any() != nil {
+		t.Fatalf("Resolve() = %#v (kind %s), want nil Any", resolved.Any(), resolved.Kind())
+	}
+}
+
 // A Value with "unsafe" strings is significantly faster:
 // safe:  1785 ns/op, 0 allocs
 // unsafe: 690 ns/op, 0 allocs

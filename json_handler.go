@@ -49,6 +49,11 @@ func appendJSONTime(s *handleState, t time.Time) {
 		// RFC 3339 is clear that years are 4 digits exactly.
 		// See golang.org/issue/4556#c15 for more discussion.
 		s.appendError(errors.New("time.Time year outside of range [0,9999]"))
+		return
+	}
+	if _, offset := t.Zone(); offset <= -24*60*60 || offset >= 24*60*60 {
+		s.appendError(errors.New("time.Time zone offset outside of range [-24h,24h)"))
+		return
 	}
 	s.buf.WriteByte('"')
 	*s.buf = t.AppendFormat(*s.buf, time.RFC3339Nano)

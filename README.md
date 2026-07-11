@@ -101,7 +101,7 @@ logger.InfoS("ready", "port", 8080)
 Output:
 
 ```json
-{"level":"INFO","logger":"server","service":"api","ts":"2026-06-26T17:30:00+08:00","msg":"ready","port":8080}
+{"logger":"server","level":"INFO","service":"api","ts":"2026-06-26T17:30:00+08:00","msg":"ready","port":8080}
 ```
 
 ### slog Handlers
@@ -144,6 +144,11 @@ logger.InfoS("user login", "user", "alice", "attempt", 1)
 `slog.Attr` values, ordinary key-value pairs, groups, and delayed `Valuer`
 values in the same argument list. Their output order is preserved. An argument
 without a matching value is emitted under `<BAD_KEY>`.
+
+Records are ordered as logger name, level, fields accumulated with `With`,
+message, and fields supplied by the logging call. For JSON groups that span
+accumulated and call fields, the group remains a single object and the message
+is emitted after that object.
 
 Duplicate keys are allowed, including `level`, `msg`, and `logger`. Text output
 keeps every occurrence, and JSON output may therefore contain duplicate object

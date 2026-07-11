@@ -3,10 +3,12 @@ package log
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -36,9 +38,36 @@ func TestLoggerWithFields(t *testing.T) {
 
 	logger.InfoS("done", "id", 1)
 
-	want := `{"level":"INFO","msg":"done","service":"api","id":1}` + "\n"
+	want := `{"level":"INFO","service":"api","msg":"done","id":1}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("json output = %q, want %q", got, want)
+	}
+}
+
+func TestLoggerBuiltInAndFieldOrder(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		handler Handler
+		want    string
+	}{
+		{
+			name:    "JSON",
+			handler: Json(&HandlerOptions{Name: "server"}),
+			want:    `{"logger":"server","level":"INFO","service":"api","msg":"ready","id":1}` + "\n",
+		},
+		{
+			name:    "Text",
+			handler: Text(&HandlerOptions{Name: "server"}),
+			want:    "[server] INFO service=api msg=ready id=1\n",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			New(&buf, test.handler).With("service", "api").InfoS("ready", "id", 1)
+			if got := buf.String(); got != test.want {
+				t.Fatalf("output = %q, want %q", got, test.want)
+			}
+		})
 	}
 }
 
@@ -66,10 +95,34 @@ func TestLoggerWithMultipleValuersPreservesSegments(t *testing.T) {
 	)
 
 	logger.InfoS("done")
-	want := `{"level":"INFO","msg":"done","before":true,"first":"one","middle":"value","second":2,"after":3}` + "\n"
+	want := `{"level":"INFO","before":true,"first":"one","middle":"value","second":2,"after":3,"msg":"done"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("json output = %q, want %q", got, want)
 	}
+}
+
+func TestLoggerWithValuerFailuresRemainValid(t *testing.T) {
+	t.Run("nil", func(t *testing.T) {
+		var valuer Valuer
+		var buf bytes.Buffer
+		New(&buf, Json()).With("value", valuer).InfoS("done")
+		want := `{"level":"INFO","value":null,"msg":"done"}` + "\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("json output = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("panic", func(t *testing.T) {
+		valuer := Valuer(func(context.Context) Value { panic("boom") })
+		var buf bytes.Buffer
+		New(&buf, Json()).With("value", valuer).InfoS("done")
+		if !json.Valid(buf.Bytes()) {
+			t.Fatalf("invalid JSON: %q", buf.String())
+		}
+		if !strings.Contains(buf.String(), "valuer panicked") {
+			t.Fatalf("json output = %q, want valuer panic marker", buf.String())
+		}
+	})
 }
 
 func TestLoggerKeyValueContracts(t *testing.T) {
@@ -109,7 +162,7 @@ func TestLoggerMixedFieldFormsKeepOrder(t *testing.T) {
 	)
 
 	logger.InfoS("done", Bool("tail", true))
-	want := `{"level":"INFO","msg":"done","field":"typed","attr":"slog","pair":"plain","group":{"inside":1,"dynamic":"resolved"},"tail":true}` + "\n"
+	want := `{"level":"INFO","field":"typed","attr":"slog","pair":"plain","group":{"inside":1,"dynamic":"resolved"},"msg":"done","tail":true}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("json output = %q, want %q", got, want)
 	}
@@ -132,7 +185,7 @@ func TestReplacerCanModifyBuiltInFields(t *testing.T) {
 	t.Run("JSON", func(t *testing.T) {
 		var buf bytes.Buffer
 		New(&buf, Json(&HandlerOptions{Name: "server", Replacer: replacer})).InfoS("ready", "id", 1)
-		want := `{"severity":"notice","message":"changed","name":"worker","id":1}` + "\n"
+		want := `{"name":"worker","severity":"notice","message":"changed","id":1}` + "\n"
 		if got := buf.String(); got != want {
 			t.Fatalf("json output = %q, want %q", got, want)
 		}
@@ -141,7 +194,7 @@ func TestReplacerCanModifyBuiltInFields(t *testing.T) {
 	t.Run("Text", func(t *testing.T) {
 		var buf bytes.Buffer
 		New(&buf, Text(&HandlerOptions{Name: "server", Replacer: replacer})).InfoS("ready", "id", 1)
-		want := "severity=notice message=changed name=worker id=1\n"
+		want := "name=worker severity=notice message=changed id=1\n"
 		if got := buf.String(); got != want {
 			t.Fatalf("text output = %q, want %q", got, want)
 		}
@@ -172,7 +225,7 @@ func TestReplacerCanDeleteBuiltInFields(t *testing.T) {
 func TestLoggerNameAllowsDuplicateLoggerField(t *testing.T) {
 	var buf bytes.Buffer
 	New(&buf, Json(&HandlerOptions{Name: "server"})).InfoS("ready", NameKey, "worker")
-	want := `{"level":"INFO","msg":"ready","logger":"server","logger":"worker"}` + "\n"
+	want := `{"logger":"server","level":"INFO","msg":"ready","logger":"worker"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("json output = %q, want %q", got, want)
 	}
@@ -227,7 +280,7 @@ func TestLoggerWithGroupKeepsCallOrder(t *testing.T) {
 
 	logger.InfoS("login", "id", 42)
 
-	want := `{"level":"INFO","msg":"login","service":"api","request":{"id":"req-1","user":{"id":42}}}` + "\n"
+	want := `{"level":"INFO","service":"api","request":{"id":"req-1","user":{"id":42}},"msg":"login"}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("json output = %q, want %q", got, want)
 	}
@@ -261,6 +314,33 @@ func TestLoggerWithGroupReplacerGroups(t *testing.T) {
 	}
 }
 
+func TestLoggerOmitsGroupEmptiedByReplacer(t *testing.T) {
+	replacer := func(_ context.Context, _ []string, field Field) Field {
+		if field.Key == "secret" {
+			return Field{}
+		}
+		return field
+	}
+	for _, test := range []struct {
+		name    string
+		handler Handler
+		want    string
+	}{
+		{name: "JSON", handler: Json(&HandlerOptions{Replacer: replacer}), want: `{"level":"INFO","msg":"done","id":1}` + "\n"},
+		{name: "Text", handler: Text(&HandlerOptions{Replacer: replacer}), want: "INFO msg=done id=1\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			New(&buf, test.handler).
+				With(Group("credentials", "secret", "token")).
+				InfoS("done", "id", 1)
+			if got := buf.String(); got != test.want {
+				t.Fatalf("output = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func TestLoggerAcceptsSlogAttrs(t *testing.T) {
 	var buf bytes.Buffer
 	logger := New(&buf, Json()).With(
@@ -275,7 +355,7 @@ func TestLoggerAcceptsSlogAttrs(t *testing.T) {
 		slog.Int("status", 200),
 	)
 
-	want := `{"level":"INFO","msg":"done","service":"api","request":{"id":"req-1"},"method":"GET","status":200}` + "\n"
+	want := `{"level":"INFO","service":"api","request":{"id":"req-1"},"msg":"done","method":"GET","status":200}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("json output = %q, want %q", got, want)
 	}
@@ -292,7 +372,7 @@ func TestLoggerAcceptsSlogAttrsWithGroup(t *testing.T) {
 		slog.Int("status", 200),
 	)
 
-	want := "INFO msg=done request.id=req-1 request.method=GET request.status=200\n"
+	want := "INFO request.id=req-1 msg=done request.method=GET request.status=200\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("text output = %q, want %q", got, want)
 	}

@@ -2,13 +2,16 @@ package logmgr
 
 import (
 	"bytes"
+	"encoding/json"
 	"flag"
+	"io"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/nexuer/log"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 func resetDefault(t *testing.T) {
@@ -125,6 +128,171 @@ func TestApplyPreservesCurrentScopeConfig(t *testing.T) {
 	}
 	if len(db.config.Fields) != 1 || !db.config.Fields[0].Equal(log.String("service", "api")) {
 		t.Fatalf("scope fields after Apply = %v, want service=api", db.config.Fields)
+	}
+}
+
+func TestApplyUpdatesHeldPrinter(t *testing.T) {
+	resetDefault(t)
+	dir := t.TempDir()
+	m := Init("server",
+		WithOutput(FileOutput),
+		WithFileDir(dir),
+		WithLevel(log.LevelError),
+	)
+	p := m.Printer()
+	p.Debug("before apply")
+
+	m.Apply(WithLevel(log.LevelDebug))
+	if got := m.Printer(); got != p {
+		t.Fatal("Apply replaced the managed Printer")
+	}
+	p.Debug("after apply")
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p.Debug("after close")
+
+	data, err := os.ReadFile(dir + "/server.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "before apply") ||
+		!strings.Contains(string(data), "after apply") ||
+		strings.Contains(string(data), "after close") {
+		t.Fatalf("file output = %q", data)
+	}
+}
+
+func TestApplyUpdatesFileWriterConfiguration(t *testing.T) {
+	resetDefault(t)
+	m := Init("server",
+		WithOutput(FileOutput),
+		WithFileDir(t.TempDir()),
+		WithFileSize(1),
+		WithFileBackups(1),
+	)
+	entry := m.DefaultScope().entries["server"]
+	before := entry.logger.Writer().(*lumberjack.Logger)
+
+	m.Apply(
+		WithFileSize(2),
+		WithFileBackups(3),
+		WithFileCompress(true),
+	)
+	after := entry.logger.Writer().(*lumberjack.Logger)
+	if before == after {
+		t.Fatal("Apply reused a file writer whose rotation configuration changed")
+	}
+	if after.MaxSize != 2 || after.MaxBackups != 3 || !after.Compress {
+		t.Fatalf("file config = (%d, %d, %v), want (2, 3, true)", after.MaxSize, after.MaxBackups, after.Compress)
+	}
+}
+
+func TestApplyMovesHeldPrinterToNewFile(t *testing.T) {
+	resetDefault(t)
+	firstDir := t.TempDir()
+	secondDir := t.TempDir()
+	m := Init("server", WithOutput(FileOutput), WithFileDir(firstDir))
+	p := m.Printer()
+	p.Info("first file")
+	m.Apply(WithFileDir(secondDir))
+	p.Info("second file")
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := os.ReadFile(firstDir + "/server.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.ReadFile(secondDir + "/server.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(first), "second file") {
+		t.Fatalf("old file received post-Apply record: %q", first)
+	}
+	if !strings.Contains(string(second), "second file") {
+		t.Fatalf("new file output = %q", second)
+	}
+}
+
+func TestManagedPrinterCaller(t *testing.T) {
+	resetDefault(t)
+	dir := t.TempDir()
+	m := Init("server",
+		WithOutput(FileOutput),
+		WithFileDir(dir),
+		WithFormat(JsonFormat),
+		WithKeyValues(log.DefaultFields...),
+	)
+	m.Printer().Info("caller")
+	if err := m.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	data, err := os.ReadFile(dir + "/server.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Caller log.Source `json:"caller"`
+	}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(record.Caller.Function, ".TestManagedPrinterCaller") {
+		t.Fatalf("caller function = %q, want TestManagedPrinterCaller", record.Caller.Function)
+	}
+}
+
+func TestConcurrentApplyAndHeldPrinter(t *testing.T) {
+	resetDefault(t)
+	m := Init("server", WithOutput(FileOutput), WithFileDir(t.TempDir()))
+	p := m.Printer()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			p.Debug("record")
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 1000; i++ {
+			m.Apply(WithLevel(log.Level(i & 1)))
+		}
+	}()
+	wg.Wait()
+	if got := m.Printer(); got != p {
+		t.Fatal("concurrent Apply replaced the managed Printer")
+	}
+}
+
+type trackingCloser struct {
+	closed bool
+}
+
+func (*trackingCloser) Write(p []byte) (int, error) { return len(p), nil }
+
+func (w *trackingCloser) Close() error {
+	w.closed = true
+	return nil
+}
+
+func TestCloseWriterOwnership(t *testing.T) {
+	closer := new(trackingCloser)
+	if err := closeWriter(closer); err != nil {
+		t.Fatal(err)
+	}
+	if !closer.closed {
+		t.Fatal("owned writer was not closed")
+	}
+	for _, writer := range []io.Writer{os.Stdout, os.Stderr, io.Discard, log.Discard} {
+		if err := closeWriter(writer); err != nil {
+			t.Fatalf("closeWriter(%T) = %v", writer, err)
+		}
 	}
 }
 

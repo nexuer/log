@@ -144,9 +144,13 @@ func (s *handleState) appendFieldValue(ctx context.Context, field Field, isPrefo
 	if v := field.Value; v.Kind() == KindValuer {
 		s.appendKey(field.Key)
 		if isPreformat {
+			valuer := v.valuer()
+			if valuer == nil {
+				valuer = nilValuer
+			}
 			s.h.preformattedAttrs = append(s.h.preformattedAttrs, preformattedAttr{
 				bytes:  *s.buf,
-				valuer: v.valuer(),
+				valuer: valuer,
 			})
 			// Keep the stored bytes owned by the segment and reuse the slice header.
 			*s.buf = nil
@@ -162,12 +166,28 @@ func (s *handleState) appendFieldValue(ctx context.Context, field Field, isPrefo
 		if len(fs) == 0 {
 			return false
 		}
+		pos := s.buf.Len()
+		sep := s.sep
+		prefixLen := len(*s.prefix)
+		groupLen := 0
+		if s.groups != nil {
+			groupLen = len(*s.groups)
+		}
+
 		// Inline a group with an empty key.
 		if field.Key != "" {
 			s.openGroup(field.Key)
 		}
 
-		s.appendFields(ctx, fs, isPreformat, true)
+		if !s.appendFields(ctx, fs, isPreformat, true) {
+			s.buf.SetLen(pos)
+			s.sep = sep
+			*s.prefix = (*s.prefix)[:prefixLen]
+			if s.groups != nil {
+				*s.groups = (*s.groups)[:groupLen]
+			}
+			return false
+		}
 
 		if field.Key != "" {
 			s.closeGroup(field.Key)
@@ -198,6 +218,7 @@ type handleState struct {
 	sep     string         // separator to write before next key
 	prefix  *buffer.Buffer // for text: key prefix
 	groups  *[]string      // pool-allocated slice of active groups, for Replacer
+	message Field          // replaced built-in message, emitted after accumulated fields
 }
 
 var groupPool = sync.Pool{New: func() any {
@@ -411,16 +432,31 @@ func (s *handleState) appendPreformattedAttrs(ctx context.Context) bool {
 			_, _ = s.buf.Write(attr.bytes)
 		}
 		if attr.valuer != nil {
-			s.appendValue(attr.valuer(ctx).Resolve(ctx))
+			s.appendValue(resolvePreformattedValuer(ctx, attr.valuer))
 		}
 	}
 	s.sep = s.h.attrSep()
 	return true
 }
 
+var nilValuer = Valuer(func(context.Context) Value { return AnyValue(nil) })
+
+func resolvePreformattedValuer(ctx context.Context, valuer Valuer) (rv Value) {
+	defer func() {
+		if recover() != nil {
+			rv = AnyValue(fmt.Errorf("valuer panicked\n%s", stack(3, 5)))
+		}
+	}()
+	return valuer(ctx).Resolve(ctx)
+}
+
 func (s *handleState) appendNonBuiltIns(ctx context.Context, kvs []any) {
 	nOpenGroups := s.h.nOpenGroups
 	s.appendPreformattedAttrs(ctx)
+	messageAppended := !s.h.json || s.h.nOpenGroups == 0
+	if messageAppended {
+		s.appendMessage(ctx)
+	}
 
 	if len(kvs) > 0 {
 		_, _ = s.prefix.WriteString(s.h.groupPrefix)
@@ -453,8 +489,22 @@ func (s *handleState) appendNonBuiltIns(ctx context.Context, kvs []any) {
 		for range s.h.groups[:nOpenGroups] {
 			s.appendByte('}')
 		}
+		if !messageAppended {
+			s.appendMessage(ctx)
+		}
 		s.appendByte('}')
 	}
+}
+
+func (s *handleState) appendMessage(ctx context.Context) {
+	if s.message.isEmpty() {
+		return
+	}
+	groups := s.groups
+	s.groups = nil
+	s.appendFieldValue(ctx, s.message, false)
+	s.groups = groups
+	s.message = Field{}
 }
 
 func (h *commonHandler) newRecordState(ctx context.Context, level, msg string) handleState {
@@ -484,9 +534,13 @@ func (h *commonHandler) newRecordState(ctx context.Context, level, msg string) h
 		_, _ = state.buf.WriteString("] ")
 		nameField = Field{}
 	}
+	if !nameField.isEmpty() {
+		state.appendFieldValue(ctx, nameField, false)
+	}
 
 	if !levelField.isEmpty() {
 		if !h.json && levelField.Key == LevelKey {
+			_, _ = state.buf.WriteString(state.sep)
 			value := levelField.Value
 			if value.Kind() == KindValuer {
 				value = value.Resolve(ctx)
@@ -497,12 +551,7 @@ func (h *commonHandler) newRecordState(ctx context.Context, level, msg string) h
 			state.appendFieldValue(ctx, levelField, false)
 		}
 	}
-	if !msgField.isEmpty() {
-		state.appendFieldValue(ctx, msgField, false)
-	}
-	if !nameField.isEmpty() {
-		state.appendFieldValue(ctx, nameField, false)
-	}
+	state.message = msgField
 
 	state.groups = stateGroups // Restore groups passed to Replacer.
 	return state
@@ -524,7 +573,10 @@ func (h *commonHandler) writeRecord(w io.Writer, state *handleState) error {
 
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	_, err := w.Write(*state.buf)
+	n, err := w.Write(*state.buf)
+	if err == nil && n != len(*state.buf) {
+		return io.ErrShortWrite
+	}
 	return err
 }
 
