@@ -161,6 +161,9 @@ replacement of the standard `slog` handler:
 - Disabled structured calls are 3-4 ns/op with no allocations. Primitive JSON
   fields, common slices, times, errors, and accumulated fields are also
   allocation-free in the measured encode-only paths.
+- Common text slices now bypass `fmt` reflection without changing their `%+v`
+  representation. `[]int` and `[]string` are allocation-free; `[]time.Time`
+  retains only the allocations required by the standard `Time.String` method.
 - The writer path is synchronized by Nexuer itself. Serial performance remains
   competitive, but parallel no-op-writer throughput is intentionally below
   libraries that do not serialize writes.
@@ -169,17 +172,37 @@ The remaining performance limitations are explicit rather than hidden:
 
 - generic call-site values that fall through `encoding/json` still pay encoder
   reflection and allocation costs;
-- text formatting of generic slices uses `fmt` and allocates substantially more
-  than the specialized JSON paths;
+- arbitrary named slices and nested values that miss the internal text fast
+  paths still use `fmt.Appendf` and reflection;
 - composing non-background slog caller-depth contexts costs 24 B and one
   allocation; Logger-only and call-only depth paths remain allocation-free;
 - parallel WritePath results measure the internal mutex policy. Removing that
   mutex would change the writer concurrency contract and is not a valid
   benchmark-only optimization.
 
-Useful follow-up work is to specialize common text slices and reduce generic
-call-site field conversion. Neither is a blocker for structured JSON or slog
-handler production use.
+Useful follow-up work is to reduce generic call-site field conversion. A custom
+reflection encoder is intentionally out of scope because output compatibility
+is more important than eliminating the remaining fallback costs.
+
+## Text Any Optimization: 2026-07-11
+
+The text fast paths preserve the exact previous output, including nil and empty
+slices, quoting and escaping, NaN/Inf, time zones, and monotonic clock suffixes.
+Representative Apple M1 Pro serial results are:
+
+| Value | Before | After | Result |
+| --- | ---: | ---: | --- |
+| `[]int` | 1.101 us, 104 B, 11 allocs | 681 ns, 0 B, 0 allocs | about 38% faster |
+| `[]string` | 1.087 us, 184 B, 11 allocs | 643 ns, 0 B, 0 allocs | about 41% faster |
+| `[]time.Time` | 4.279 us, 881 B, 21 allocs | 3.576 us, 320 B, 10 allocs | about 16% faster |
+| struct fallback | 1.375 us, 232 B, 6 allocs | about 1.4 us, 152 B, 5 allocs | latency neutral |
+| struct-slice fallback | 1.500 us, 128 B, 1 alloc | about 1.5 us, 0 B, 0 allocs | latency neutral |
+
+Post-change allocation profiling attributes 99.92% of the remaining
+`[]time.Time` allocations to `time.Time.Format`, called by the standard
+`Time.String` implementation. Replacing it with RFC3339 would remove those
+allocations but change observable text output, especially for monotonic times,
+so the compatible implementation is retained.
 
 ## Full Result: 2026-07-10
 

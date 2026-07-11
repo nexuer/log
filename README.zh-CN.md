@@ -115,8 +115,8 @@ logger.Info("ready", "port", 8080)
 `Logger.SlogHandler` 会保留 Logger 当前的输出、级别、handler、字段和
 group，只输出 `level`、`msg` 和用户字段。
 `slog.Record.Time` 和 `slog.Record.PC` 始终会被忽略。
-`HandlerOptions.Replacer` 可以转换用户字段；它能观察 `level` 和 `msg`，但不能删除或
-替换这两个内置字段。
+`HandlerOptions.Replacer` 可以转换、重命名或删除用户字段，以及 `level`、`msg`、
+`logger` 三个内置字段。返回空 `Field` 会删除字段。包括内置 key 在内，重复 key 仍然允许。
 
 ## 字段
 
@@ -135,6 +135,14 @@ logger.InfoS("user login",
 ```go
 logger.InfoS("user login", "user", "alice", "attempt", 1)
 ```
+
+`With`、`Fields` 和结构化日志方法可以在同一个参数列表中混用类型化 `Field`、
+`slog.Attr`、普通键值对、group 和延迟求值的 `Valuer`，输出顺序与参数顺序一致。
+没有配对 value 的参数会使用 `<BAD_KEY>` 作为 key 输出。
+
+允许重复 key，包括 `level`、`msg` 和 `logger`。Text 会保留每一次出现；JSON
+因此可能包含重复的对象成员。很多 JSON 解析器会保留最后一个值，但这取决于解析器实现；
+需要跨系统保持唯一语义时应避免重复 key。
 
 使用 `Err` 输出标准错误字段。nil error 会返回空字段，不会被输出：
 
@@ -159,6 +167,9 @@ logger := log.New(os.Stdout).With(
 	"caller", log.Caller(1),
 )
 ```
+
+Timestamp 和 Caller 对每个 Logger 都是显式启用的：通过 `With` 添加，或者使用
+`With(log.DefaultFields...)`。`DefaultFields` 是包提供的只读模板，不能修改，也不能并发修改。
 
 适合时间戳、调用位置、请求上下文等不应该在 `With` 时提前计算的字段。
 

@@ -7,7 +7,10 @@ import (
 	"io"
 	"reflect"
 	"strconv"
+	"time"
 	"unsafe"
+
+	"github.com/nexuer/log/internal/buffer"
 )
 
 type textHandler struct {
@@ -101,11 +104,88 @@ func appendTextValue(s *handleState, v Value) error {
 			_, _ = s.buf.WriteString(strconv.Quote(string(bs)))
 			return nil
 		}
-		s.appendString(fmt.Sprintf("%+v", v.Any()))
+		if !appendTextSlice(s, v.any) {
+			appendTextAny(s, v.any)
+		}
 	default:
 		*s.buf = v.append(*s.buf)
 	}
 	return nil
+}
+
+func appendTextAny(s *handleState, value any) {
+	formatted := buffer.New()
+	defer formatted.Free()
+	*formatted = fmt.Appendf(*formatted, "%+v", value)
+	s.appendString(bytesToString(*formatted))
+}
+
+func appendTextSlice(s *handleState, value any) bool {
+	switch value.(type) {
+	case []int, []int64, []uint64, []float64, []bool, []string, []time.Time:
+	default:
+		return false
+	}
+
+	formatted := buffer.New()
+	defer formatted.Free()
+	*formatted = append(*formatted, '[')
+
+	switch values := value.(type) {
+	case []int:
+		for i, value := range values {
+			if i > 0 {
+				*formatted = append(*formatted, ' ')
+			}
+			*formatted = strconv.AppendInt(*formatted, int64(value), 10)
+		}
+	case []int64:
+		for i, value := range values {
+			if i > 0 {
+				*formatted = append(*formatted, ' ')
+			}
+			*formatted = strconv.AppendInt(*formatted, value, 10)
+		}
+	case []uint64:
+		for i, value := range values {
+			if i > 0 {
+				*formatted = append(*formatted, ' ')
+			}
+			*formatted = strconv.AppendUint(*formatted, value, 10)
+		}
+	case []float64:
+		for i, value := range values {
+			if i > 0 {
+				*formatted = append(*formatted, ' ')
+			}
+			*formatted = strconv.AppendFloat(*formatted, value, 'g', -1, 64)
+		}
+	case []bool:
+		for i, value := range values {
+			if i > 0 {
+				*formatted = append(*formatted, ' ')
+			}
+			*formatted = strconv.AppendBool(*formatted, value)
+		}
+	case []string:
+		for i, value := range values {
+			if i > 0 {
+				*formatted = append(*formatted, ' ')
+			}
+			*formatted = append(*formatted, value...)
+		}
+	case []time.Time:
+		for i, value := range values {
+			if i > 0 {
+				*formatted = append(*formatted, ' ')
+			}
+			*formatted = append(*formatted, value.String()...)
+		}
+	}
+
+	*formatted = append(*formatted, ']')
+	s.appendString(bytesToString(*formatted))
+	return true
 }
 
 func appendTextSource(s *handleState, source *Source) {

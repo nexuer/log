@@ -59,6 +59,10 @@ func TestKindString(t *testing.T) {
 			input: KindValuer,
 			want:  "Valuer",
 		},
+		{
+			input: KindSource,
+			want:  "Source",
+		},
 	}
 
 	for i, tt := range tests {
@@ -107,6 +111,48 @@ func TestValueEqual(t *testing.T) {
 	}
 }
 
+func TestValueEqualNonComparableAny(t *testing.T) {
+	tests := []struct {
+		name        string
+		left, right any
+		want        bool
+	}{
+		{name: "equal slice", left: []int{1, 2}, right: []int{1, 2}, want: true},
+		{name: "different slice", left: []int{1, 2}, right: []int{2, 1}},
+		{name: "equal map", left: map[string]int{"a": 1}, right: map[string]int{"a": 1}, want: true},
+		{name: "different map", left: map[string]int{"a": 1}, right: map[string]int{"a": 2}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := AnyValue(test.left).Equal(AnyValue(test.right)); got != test.want {
+				t.Fatalf("Equal() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
+func TestSourceValueStringAndEqual(t *testing.T) {
+	source := &Source{Function: "example.fn", File: "example.go", Line: 42}
+	equalSource := &Source{Function: "example.fn", File: "example.go", Line: 42}
+	differentSource := &Source{Function: "example.fn", File: "example.go", Line: 43}
+
+	if got, want := SourceValue(source).String(), "example.go:42"; got != want {
+		t.Fatalf("String() = %q, want %q", got, want)
+	}
+	if !SourceValue(source).Equal(SourceValue(equalSource)) {
+		t.Fatal("equal sources reported unequal")
+	}
+	if SourceValue(source).Equal(SourceValue(differentSource)) {
+		t.Fatal("different sources reported equal")
+	}
+	if !SourceValue(nil).Equal(SourceValue(nil)) {
+		t.Fatal("nil sources reported unequal")
+	}
+	if got, want := SourceValue(nil).String(), "<nil>"; got != want {
+		t.Fatalf("nil Source String() = %q, want %q", got, want)
+	}
+}
+
 func TestValueString(t *testing.T) {
 	for _, test := range []struct {
 		v    Value
@@ -122,6 +168,8 @@ func TestValueString(t *testing.T) {
 		{ValuerValue(Caller(0)), "<Valuer>"},
 		{ValuerValue(Timestamp(time.RFC3339)), "<Valuer>"},
 		{GroupValue(Int("a", 1), Bool("b", true)), "[a=1 b=true]"},
+		{SourceValue(&Source{File: "example.go", Line: 42}), "example.go:42"},
+		{SourceValue(nil), "<nil>"},
 	} {
 		if got := test.v.String(); got != test.want {
 			t.Errorf("%#v:\ngot  %q\nwant %q", test.v, got, test.want)

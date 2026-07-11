@@ -1,6 +1,7 @@
 package log
 
 import (
+	"strconv"
 	"testing"
 )
 
@@ -121,6 +122,14 @@ func TestParseLevel(t *testing.T) {
 			want:  LevelFatal,
 			input: "FATAL",
 		},
+		{want: LevelInfo, input: ""},
+		{want: LevelInfo, input: "UNKNOWN"},
+		{want: LevelInfo, input: "UNKNOWN+4"},
+		{want: LevelInfo, input: "ERROR+x"},
+		{want: LevelInfo, input: "WARN+"},
+		{want: LevelError + 2, input: "ERROR+2"},
+		{want: LevelInfo, input: "FATAL+" + strconv.Itoa(int(^uint(0)>>1))},
+		{want: LevelInfo, input: "DEBUG" + strconv.Itoa(-int(^uint(0)>>1)-1)},
 
 		{
 			want:  Level(LevelDebug - 1),

@@ -118,8 +118,9 @@ logger.Info("ready", "port", 8080)
 `Logger.SlogHandler` preserves the Logger's current output, level, handler,
 fields, and groups. It outputs `level`, `msg`, and user
 attributes only. `slog.Record.Time` and `slog.Record.PC` are always ignored.
-`HandlerOptions.Replacer` transforms user attributes; it observes `level` and
-`msg`, but cannot remove or replace those built-in fields.
+`HandlerOptions.Replacer` can transform, rename, or remove user attributes and
+the built-in `level`, `msg`, and `logger` fields. Returning an empty `Field`
+removes a field. Duplicate keys remain allowed, including built-in keys.
 
 ## Fields
 
@@ -138,6 +139,17 @@ Plain key-value pairs are also supported:
 ```go
 logger.InfoS("user login", "user", "alice", "attempt", 1)
 ```
+
+`With`, `Fields`, and structured logging methods accept typed `Field` values,
+`slog.Attr` values, ordinary key-value pairs, groups, and delayed `Valuer`
+values in the same argument list. Their output order is preserved. An argument
+without a matching value is emitted under `<BAD_KEY>`.
+
+Duplicate keys are allowed, including `level`, `msg`, and `logger`. Text output
+keeps every occurrence, and JSON output may therefore contain duplicate object
+members. JSON consumers commonly keep the last value, but this is parser
+dependent; avoid duplicates when interoperability requires one unambiguous
+value.
 
 Use `Err` for the standard error field. A nil error returns an empty field and
 is not emitted:
@@ -163,6 +175,10 @@ logger := log.New(os.Stdout).With(
 	"caller", log.Caller(1),
 )
 ```
+
+Timestamp and caller fields are opt-in for a logger: add them with `With`, or
+use `With(log.DefaultFields...)`. `DefaultFields` is a read-only package
+template and must not be mutated or modified concurrently.
 
 This is useful for timestamps, caller data, request-scoped values, and other
 values that should not be computed when `With` is called.

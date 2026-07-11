@@ -42,6 +42,157 @@ func TestLoggerWithFields(t *testing.T) {
 	}
 }
 
+func TestLoggerWithFieldsUsesZeroCapacityBuffer(t *testing.T) {
+	logger := New(io.Discard, Json()).With("k", "v")
+	handler := logger.handler.(*jsonHandler).handler
+	if len(handler.preformattedAttrs) != 1 {
+		t.Fatalf("preformatted segments = %d, want 1", len(handler.preformattedAttrs))
+	}
+	if got := cap(handler.preformattedAttrs[0].bytes); got >= 1024 {
+		t.Fatalf("preformatted buffer capacity = %d, want less than 1024", got)
+	}
+}
+
+func TestLoggerWithMultipleValuersPreservesSegments(t *testing.T) {
+	var buf bytes.Buffer
+	first := Valuer(func(context.Context) Value { return StringValue("one") })
+	second := Valuer(func(context.Context) Value { return IntValue(2) })
+	logger := New(&buf, Json()).With(
+		"before", true,
+		"first", first,
+		"middle", "value",
+		"second", second,
+		"after", 3,
+	)
+
+	logger.InfoS("done")
+	want := `{"level":"INFO","msg":"done","before":true,"first":"one","middle":"value","second":2,"after":3}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("json output = %q, want %q", got, want)
+	}
+}
+
+func TestLoggerKeyValueContracts(t *testing.T) {
+	t.Run("odd input", func(t *testing.T) {
+		var text, json bytes.Buffer
+		New(&text).InfoS("done", "missing")
+		New(&json, Json()).InfoS("done", "missing")
+		if got, want := text.String(), `INFO msg=done <BAD_KEY>=missing`+"\n"; got != want {
+			t.Fatalf("text output = %q, want %q", got, want)
+		}
+		if got, want := json.String(), `{"level":"INFO","msg":"done","<BAD_KEY>":"missing"}`+"\n"; got != want {
+			t.Fatalf("json output = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("duplicate keys", func(t *testing.T) {
+		var text, json bytes.Buffer
+		New(&text).InfoS("original", "msg", "replacement", "id", 1, "id", 2)
+		New(&json, Json()).InfoS("original", "msg", "replacement", "id", 1, "id", 2)
+		if got, want := text.String(), "INFO msg=original msg=replacement id=1 id=2\n"; got != want {
+			t.Fatalf("text output = %q, want %q", got, want)
+		}
+		if got, want := json.String(), `{"level":"INFO","msg":"original","msg":"replacement","id":1,"id":2}`+"\n"; got != want {
+			t.Fatalf("json output = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestLoggerMixedFieldFormsKeepOrder(t *testing.T) {
+	var buf bytes.Buffer
+	dynamic := Valuer(func(context.Context) Value { return StringValue("resolved") })
+	logger := New(&buf, Json()).With(
+		String("field", "typed"),
+		slog.String("attr", "slog"),
+		"pair", "plain",
+		Group("group", "inside", 1, "dynamic", dynamic),
+	)
+
+	logger.InfoS("done", Bool("tail", true))
+	want := `{"level":"INFO","msg":"done","field":"typed","attr":"slog","pair":"plain","group":{"inside":1,"dynamic":"resolved"},"tail":true}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("json output = %q, want %q", got, want)
+	}
+}
+
+func TestReplacerCanModifyBuiltInFields(t *testing.T) {
+	replacer := func(_ context.Context, _ []string, field Field) Field {
+		switch field.Key {
+		case LevelKey:
+			return String("severity", "notice")
+		case MessageKey:
+			return String("message", "changed")
+		case NameKey:
+			return String("name", "worker")
+		default:
+			return field
+		}
+	}
+
+	t.Run("JSON", func(t *testing.T) {
+		var buf bytes.Buffer
+		New(&buf, Json(&HandlerOptions{Name: "server", Replacer: replacer})).InfoS("ready", "id", 1)
+		want := `{"severity":"notice","message":"changed","name":"worker","id":1}` + "\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("json output = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("Text", func(t *testing.T) {
+		var buf bytes.Buffer
+		New(&buf, Text(&HandlerOptions{Name: "server", Replacer: replacer})).InfoS("ready", "id", 1)
+		want := "severity=notice message=changed name=worker id=1\n"
+		if got := buf.String(); got != want {
+			t.Fatalf("text output = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestReplacerCanDeleteBuiltInFields(t *testing.T) {
+	replacer := func(_ context.Context, _ []string, field Field) Field {
+		switch field.Key {
+		case LevelKey, MessageKey, NameKey:
+			return Field{}
+		default:
+			return field
+		}
+	}
+
+	var jsonBuf, textBuf bytes.Buffer
+	New(&jsonBuf, Json(&HandlerOptions{Name: "server", Replacer: replacer})).InfoS("ready", "id", 1)
+	New(&textBuf, Text(&HandlerOptions{Name: "server", Replacer: replacer})).InfoS("ready", "id", 1)
+	if got, want := jsonBuf.String(), `{"id":1}`+"\n"; got != want {
+		t.Fatalf("json output = %q, want %q", got, want)
+	}
+	if got, want := textBuf.String(), "id=1\n"; got != want {
+		t.Fatalf("text output = %q, want %q", got, want)
+	}
+}
+
+func TestLoggerNameAllowsDuplicateLoggerField(t *testing.T) {
+	var buf bytes.Buffer
+	New(&buf, Json(&HandlerOptions{Name: "server"})).InfoS("ready", NameKey, "worker")
+	want := `{"level":"INFO","msg":"ready","logger":"server","logger":"worker"}` + "\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("json output = %q, want %q", got, want)
+	}
+}
+
+func TestReplacerCanModifyTextLoggerPrefix(t *testing.T) {
+	var buf bytes.Buffer
+	replacer := func(_ context.Context, _ []string, field Field) Field {
+		if field.Key == NameKey {
+			return String(NameKey, "worker")
+		}
+		return field
+	}
+	New(&buf, Text(&HandlerOptions{Name: "server", Replacer: replacer})).InfoS("ready")
+	want := "[worker] INFO msg=ready\n"
+	if got := buf.String(); got != want {
+		t.Fatalf("text output = %q, want %q", got, want)
+	}
+}
+
 func TestLoggerWithGroupText(t *testing.T) {
 	var buf bytes.Buffer
 	logger := New(&buf).WithGroup("request")

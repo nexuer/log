@@ -4,11 +4,42 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestDefaultFieldsAreUsedAsReadOnlyTemplate(t *testing.T) {
+	beforeKeys := []any{DefaultFields[0], DefaultFields[2]}
+	beforeValuers := []uintptr{
+		reflectValuerPointer(DefaultFields[1]),
+		reflectValuerPointer(DefaultFields[3]),
+	}
+	var buf bytes.Buffer
+	New(&buf, Json()).With(DefaultFields...).InfoS("done")
+
+	if len(DefaultFields) != 4 || DefaultFields[0] != beforeKeys[0] || DefaultFields[2] != beforeKeys[1] ||
+		reflectValuerPointer(DefaultFields[1]) != beforeValuers[0] ||
+		reflectValuerPointer(DefaultFields[3]) != beforeValuers[1] {
+		t.Fatalf("DefaultFields changed: %#v", DefaultFields)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := record["ts"]; !ok {
+		t.Fatal("default timestamp field is missing")
+	}
+	if _, ok := record["caller"]; !ok {
+		t.Fatal("default caller field is missing")
+	}
+}
+
+func reflectValuerPointer(value any) uintptr {
+	return reflect.ValueOf(value).Pointer()
+}
 
 func TestTimestampValuePreservesFormattingAndEscaping(t *testing.T) {
 	timestamp := time.Date(2026, time.July, 10, 21, 30, 45, 0, time.FixedZone("CST", 8*60*60))

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"reflect"
 	"runtime"
 	"slices"
 	"strconv"
@@ -52,7 +53,6 @@ type (
 // Kind is the kind of a [Value].
 type Kind int
 
-// The following list is sorted alphabetically, but it's also important that
 // KindAny is 0 so that a zero Value represents nil.
 
 const (
@@ -492,7 +492,8 @@ func (v Value) callerSource() (Source, bool) {
 
 //////////////// Other
 
-// Equal reports whether v and w represent the same Go value.
+// Equal reports whether v and w represent the same Go value. KindAny values
+// use Go equality when comparable and deep equality otherwise.
 func (v Value) Equal(w Value) bool {
 	k1 := v.Kind()
 	k2 := w.Kind()
@@ -509,12 +510,28 @@ func (v Value) Equal(w Value) bool {
 	case KindTime:
 		return v.time().Equal(w.time())
 	case KindAny:
-		return v.any == w.any // may panic if non-comparable
+		vType, wType := reflect.TypeOf(v.any), reflect.TypeOf(w.any)
+		if vType != wType {
+			return false
+		}
+		if vType == nil {
+			return true
+		}
+		if vType.Comparable() {
+			return v.any == w.any
+		}
+		return reflect.DeepEqual(v.any, w.any)
 	case KindValuer:
 		return false
 		//return v.any == w.any // must panic on function
 	case KindGroup:
 		return slices.EqualFunc(v.group(), w.group(), Field.Equal)
+	case KindSource:
+		vSource, wSource := v.Source(), w.Source()
+		if vSource == nil || wSource == nil {
+			return vSource == nil && wSource == nil
+		}
+		return *vSource == *wSource
 	default:
 		panic(fmt.Sprintf("bad kind: %s", k1))
 	}
@@ -555,6 +572,12 @@ func (v Value) append(dst []byte) []byte {
 		return append(dst, v.time().String()...)
 	case KindGroup:
 		return fmt.Append(dst, v.group())
+	case KindSource:
+		source := v.Source()
+		if source == nil {
+			return append(dst, "<nil>"...)
+		}
+		return append(dst, source.String()...)
 	case KindAny, KindValuer:
 		return fmt.Append(dst, v.any)
 	default:
@@ -695,6 +718,9 @@ func mergeCallerDepth(callCtx, loggerCtx context.Context) context.Context {
 }
 
 func (s *Source) String() string {
+	if s == nil {
+		return "<nil>"
+	}
 	var builder strings.Builder
 	if s.File != "" {
 		builder.WriteString(s.File)

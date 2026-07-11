@@ -217,7 +217,7 @@ func TestSlogHandlerLazyPathContinuesNativeGroups(t *testing.T) {
 	}
 }
 
-func TestSlogHandlerReplacerKeepsBuiltIns(t *testing.T) {
+func TestSlogHandlerReplacerCanDeleteBuiltIns(t *testing.T) {
 	var buf bytes.Buffer
 	var calls []string
 	handler := New(&buf, Json(&HandlerOptions{
@@ -236,7 +236,7 @@ func TestSlogHandlerReplacerKeepsBuiltIns(t *testing.T) {
 	logger := slog.New(handler).WithGroup("request")
 	logger.Info("done", "secret", "token", "status", 200)
 
-	want := `{"level":"INFO","msg":"done","request":{"secret":"[redacted]","status":200}}` + "\n"
+	want := `{"request":{"secret":"[redacted]","status":200}}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}

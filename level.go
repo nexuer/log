@@ -43,14 +43,20 @@ func (l Level) String() string {
 	}
 }
 
+// ParseLevel parses a level name with an optional signed offset. Invalid input
+// falls back to [LevelInfo].
 func ParseLevel(s string) Level {
-	l := LevelInfo
 	name := s
 	offset := 0
 	if i := strings.IndexAny(s, "+-"); i >= 0 {
 		name = s[:i]
-		offset, _ = strconv.Atoi(s[i:])
+		var err error
+		offset, err = strconv.Atoi(s[i:])
+		if err != nil {
+			return LevelInfo
+		}
 	}
+	var l Level
 	switch strings.ToUpper(name) {
 	case "DEBUG":
 		l = LevelDebug
@@ -62,6 +68,13 @@ func ParseLevel(s string) Level {
 		l = LevelError
 	case "FATAL":
 		l = LevelFatal
+	default:
+		return LevelInfo
+	}
+	maxInt := int(^uint(0) >> 1)
+	minInt := -maxInt - 1
+	if offset > 0 && int(l) > maxInt-offset || offset < 0 && int(l) < minInt-offset {
+		return LevelInfo
 	}
 	return l + Level(offset)
 }

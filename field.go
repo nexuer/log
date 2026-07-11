@@ -81,6 +81,7 @@ func Any(key string, value any) Field {
 }
 
 // Fields converts key-value pairs to Fields using the same rules as Logger.With.
+// An argument without a matching value is emitted with the key "<BAD_KEY>".
 func Fields(kvs ...any) []Field {
 	return kvsToFieldSlice(kvs)
 }

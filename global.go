@@ -23,6 +23,8 @@ var (
 	// DefaultTimestamp is a Valuer that returns the current wallclock time.
 	DefaultTimestamp = Timestamp(time.RFC3339)
 
+	// DefaultFields is a read-only template for adding the default timestamp
+	// and caller fields. Callers must not mutate it or modify it concurrently.
 	DefaultFields = []any{
 		"ts", DefaultTimestamp,
 		"caller", DefaultCaller,

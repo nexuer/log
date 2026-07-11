@@ -67,10 +67,10 @@ Text output:
 JSON output with JSON format enabled:
 
 ```json
-{"name":"server","level":"INFO","service":"api","msg":"server started"}
-{"name":"server.worker","level":"INFO","service":"api","msg":"job 42 started"}
-{"name":"db","level":"WARN","service":"api","msg":"database latency is high"}
-{"name":"db.mysql","level":"ERROR","service":"api","msg":"query failed"}
+{"level":"INFO","msg":"server started","logger":"server","service":"api"}
+{"level":"INFO","msg":"job 42 started","logger":"server.worker","service":"api"}
+{"level":"WARN","msg":"database latency is high","logger":"db","service":"api"}
+{"level":"ERROR","msg":"query failed","logger":"db.mysql","service":"api"}
 ```
 
 ## Core API

@@ -22,9 +22,11 @@ type preformattedAttr struct {
 }
 
 type HandlerOptions struct {
+	// Name identifies the logger. JSON handlers emit it as the built-in logger
+	// field; text handlers render it as a [name] prefix.
 	Name string
-	// Replacer can transform user fields. Built-in fields level and msg are passed
-	// to Replacer for observation only; returned replacements are ignored.
+	// Replacer can transform or remove user fields and the built-in level, msg,
+	// and logger fields.
 	Replacer Replacer
 }
 
@@ -43,9 +45,6 @@ func newCommonHandler(json bool, opts HandlerOptions) *commonHandler {
 		mu:   &sync.Mutex{},
 		json: json,
 		opts: opts,
-	}
-	if json && opts.Name != "" {
-		return ch.withFields(context.Background(), []Field{String(NameKey, opts.Name)})
 	}
 	return ch
 }
@@ -70,8 +69,8 @@ func (h *commonHandler) withFields(ctx context.Context, fields []Field) *commonH
 		return h
 	}
 	h2 := h.clone()
-	var state handleState
-	state = h2.newHandleState(buffer.NewNonCap(), false, h.attrSep())
+	var buf buffer.Buffer
+	state := h2.newHandleState(&buf, false, h.attrSep())
 	defer state.free()
 	_, _ = state.prefix.WriteString(h.groupPrefix)
 	if h.hasPreformattedAttrs() {
@@ -132,6 +131,11 @@ func (s *handleState) appendField(ctx context.Context, field Field, isPreformat 
 		// The value is resolved before calling Replacer, so the user doesn't have to.
 		field = rep(ctx, gs, field)
 	}
+	return s.appendFieldValue(ctx, field, isPreformat)
+}
+
+// appendFieldValue appends a field after any replacement has been applied.
+func (s *handleState) appendFieldValue(ctx context.Context, field Field, isPreformat bool) bool {
 	// Elide empty Attrs.
 	if field.isEmpty() {
 		return false
@@ -144,8 +148,8 @@ func (s *handleState) appendField(ctx context.Context, field Field, isPreformat 
 				bytes:  *s.buf,
 				valuer: v.valuer(),
 			})
-			// new buffer
-			s.buf = buffer.NewNonCap()
+			// Keep the stored bytes owned by the segment and reuse the slice header.
+			*s.buf = nil
 		} else {
 			s.appendValue(v.Resolve(ctx))
 		}
@@ -460,39 +464,55 @@ func (h *commonHandler) newRecordState(ctx context.Context, level, msg string) h
 		state.appendByte('{')
 	}
 
-	if !h.json && h.opts.Name != "" {
-		_, _ = state.buf.WriteString("[")
-		_, _ = state.buf.WriteString(h.opts.Name)
-		_, _ = state.buf.WriteString("] ")
-	}
 	// Built-in attributes. They are not in a group.
 	stateGroups := state.groups
 	state.groups = nil // Built-in fields are always outside user groups.
-	rep := h.opts.Replacer
-	// level
-	if rep != nil {
-		// ignore replace level
-		rep(ctx, nil, String(LevelKey, level))
+	levelField := h.replaceBuiltIn(ctx, String(LevelKey, level))
+	msgField := Field{}
+	if msg != "" {
+		msgField = h.replaceBuiltIn(ctx, String(MessageKey, msg))
 	}
-	if h.json {
-		state.appendKey(LevelKey)
-		state.appendString(level)
-	} else {
-		state.appendString(level)
-		state.sep = h.attrSep()
+	nameField := Field{}
+	if h.opts.Name != "" {
+		nameField = h.replaceBuiltIn(ctx, String(NameKey, h.opts.Name))
 	}
 
-	// ignore replace message
-	if rep != nil {
-		rep(ctx, nil, String(MessageKey, msg))
+	// Preserve the text handler's [name] prefix when logger remains a string.
+	if !h.json && nameField.Key == NameKey && nameField.Value.Kind() == KindString {
+		_, _ = state.buf.WriteString("[")
+		_, _ = state.buf.WriteString(nameField.Value.str())
+		_, _ = state.buf.WriteString("] ")
+		nameField = Field{}
 	}
-	if msg != "" {
-		state.appendKey(MessageKey)
-		state.appendString(msg)
+
+	if !levelField.isEmpty() {
+		if !h.json && levelField.Key == LevelKey {
+			value := levelField.Value
+			if value.Kind() == KindValuer {
+				value = value.Resolve(ctx)
+			}
+			state.appendValue(value)
+			state.sep = h.attrSep()
+		} else {
+			state.appendFieldValue(ctx, levelField, false)
+		}
+	}
+	if !msgField.isEmpty() {
+		state.appendFieldValue(ctx, msgField, false)
+	}
+	if !nameField.isEmpty() {
+		state.appendFieldValue(ctx, nameField, false)
 	}
 
 	state.groups = stateGroups // Restore groups passed to Replacer.
 	return state
+}
+
+func (h *commonHandler) replaceBuiltIn(ctx context.Context, field Field) Field {
+	if h.opts.Replacer == nil {
+		return field
+	}
+	return h.opts.Replacer(ctx, nil, field)
 }
 
 func (h *commonHandler) writeRecord(w io.Writer, state *handleState) error {

@@ -16,19 +16,6 @@ var bufPool = sync.Pool{
 	},
 }
 
-// nonCapBufPool is used where the caller wants pooled buffer headers without
-// retaining a preallocated backing array.
-var nonCapBufPool = sync.Pool{
-	New: func() any {
-		b := make([]byte, 0)
-		return (*Buffer)(&b)
-	},
-}
-
-func NewNonCap() *Buffer {
-	return nonCapBufPool.Get().(*Buffer)
-}
-
 func New() *Buffer {
 	return bufPool.Get().(*Buffer)
 }
