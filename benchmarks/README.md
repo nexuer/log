@@ -23,7 +23,7 @@ Run the cross-library JSON comparison:
 go test -run '^$' -bench='^BenchmarkComparison(EncodeOnly|WritePath)$' -benchmem -count=5
 ```
 
-Run Nexuer JSON-focused scenarios before and after an encoder change:
+Run the Nexuer JSON-focused scenarios:
 
 ```sh
 go test -run '^$' -bench='^BenchmarkNexuer(FieldScale|FieldForms|AnyValues)/JSON' -benchmem -count=5
@@ -41,8 +41,6 @@ the same `slog.Logger` and producing records without time or PC/source fields:
 ```sh
 go test -run '^$' -bench='^BenchmarkSlogHandlers' -benchmem -count=5
 ```
-
-Use `benchstat` on saved before and after output for optimization decisions.
 
 ## Measurement Layers
 
@@ -142,68 +140,79 @@ within a named scenario and inspect allocations alongside `ns/op`.
 to estimate production log throughput when the destination blocks or performs
 real I/O.
 
-## Performance Assessment
+## Performance Comparison
 
-The 2026-07-11 Apple M1 Pro snapshot is suitable for a `v0.0.1` release. The
-common native JSON and text paths are fast and allocation-free, and the custom
-`slog.Handler` is competitive with the standard handlers. The results should
-still be read by measurement layer rather than as one overall ranking:
+The following results were measured on an Apple M1 Pro. Lower latency and fewer
+allocations are better. EncodeOnly and WritePath are separate measurement
+layers and should not be compared directly.
 
-- Native encode-only short messages take 219.3 ns for JSON and 436.3 ns for
-  text, both at 0 B/op and 0 allocs/op. In the direct standard-slog matrix the
-  corresponding results are 446.2 ns and 684.9 ns. Five accumulated fields take
-  227.0 ns versus 442.9 ns for JSON, and 444.9 ns versus 682.6 ns for text.
-- Behind the same `slog.Logger`, the standard handler remains faster for a few
-  small serial cases: JSON messages are 380.3 ns versus 427.7 ns, and text
-  messages are 612.3 ns versus 643.2 ns. At 25-50 fields Nexuer is about 2-6%
-  faster, and both handlers have the same field-slice allocations.
-- The replacement handler is strongest for complex values. JSON `[]time.Time`
-  takes 1443 ns with no allocation versus 2623 ns, 817 B, and 12 allocations for
-  the standard handler. Text `[]int` takes 912.0 ns with no allocation versus
-  1324 ns, 104 B, and 11 allocations. Struct fallbacks remain closer.
-- Native accumulated `DefaultTimestamp`, `DefaultCaller`, and `DefaultFields`
-  are allocation-free. JSON serial costs are 342.6 ns, 535.4 ns, and 1275 ns;
-  text costs are 557.8 ns, 640.9 ns, and 1326 ns. Through `slog.Logger`, combined
-  default fields cost 1572 ns for JSON and 1659 ns for text at 8 B/op and one
-  allocation; additional caller-depth composition reaches 48 B/op and two
-  allocations.
-- The synchronized WritePath remains competitive with standard slog: serial
-  messages are 225.2 ns versus 436.4 ns, while parallel messages are 207.2 ns
-  versus 222.0 ns. Parallel unlocked zerolog and phuslu paths are much faster,
-  which reflects their different writer synchronization policy.
-- Logger construction and derivation are not zero-allocation operations:
-  `New` is about 98 ns and 208 B, `WithFields` is 323.4 ns and 360 B, and a
-  depth-three `WithGroup` chain is 286.5 ns and 664 B. These costs are normally
-  paid during setup rather than per emitted record.
+Serial JSON message encoding:
 
-The main remaining costs are compatible fallbacks: generic JSON values use
-`encoding/json`, arbitrary text values use formatting/reflection, and
-`[]time.Time` text output retains the allocations required by
-`time.Time.String`. Avoiding those costs with a custom reflection encoder or a
-different time representation would increase maintenance risk or change output,
-so they are not release blockers.
+| Library | ns/op | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| phuslu | 130.8 | 0 | 0 |
+| zerolog | 163.2 | 0 | 0 |
+| Nexuer | 224.4 | 0 | 0 |
+| zap | 260.0 | 0 | 0 |
+| slog | 429.8 | 0 | 0 |
+| logrus | 1110 | 938 | 20 |
 
-## Text Any Optimization: 2026-07-11
+Nexuer is faster than zap, slog, and logrus in this JSON case, while zerolog
+and phuslu are faster. In the parallel EncodeOnly case Nexuer records 42.52
+ns/op, ahead of zap at 52.13 ns/op and behind zerolog at 28.53 ns/op and phuslu
+at 20.76 ns/op.
 
-The text fast paths preserve the exact previous output, including nil and empty
-slices, quoting and escaping, NaN/Inf, time zones, and monotonic clock suffixes.
-Representative Apple M1 Pro serial results are:
+Serial native text/console message encoding:
 
-| Value | Before | After | Result |
+| Library | ns/op | B/op | allocs/op |
+| --- | ---: | ---: | ---: |
+| zap | 274.8 | 24 | 2 |
+| Nexuer | 437.4 | 0 | 0 |
+| slog | 665.2 | 0 | 0 |
+| phuslu | 685.0 | 897 | 5 |
+| logrus | 1061 | 472 | 14 |
+| zerolog | 2305 | 1786 | 31 |
+
+These text and console encoders do not produce byte-for-byte identical output,
+so the table compares each library's native formatter rather than identical
+encoding work.
+
+Using Nexuer as a handler behind the same `slog.Logger` keeps the common paths
+close to the standard handlers:
+
+| Scenario | Standard handler | Nexuer handler | Allocation result |
 | --- | ---: | ---: | --- |
-| `[]int` | 1.101 us, 104 B, 11 allocs | 681 ns, 0 B, 0 allocs | about 38% faster |
-| `[]string` | 1.087 us, 184 B, 11 allocs | 643 ns, 0 B, 0 allocs | about 41% faster |
-| `[]time.Time` | 4.279 us, 881 B, 21 allocs | 3.576 us, 320 B, 10 allocs | about 16% faster |
-| struct fallback | 1.375 us, 232 B, 6 allocs | about 1.4 us, 152 B, 5 allocs | latency neutral |
-| struct-slice fallback | 1.500 us, 128 B, 1 alloc | about 1.5 us, 0 B, 0 allocs | latency neutral |
+| JSON message | 380.3 ns | 427.7 ns | both 0 B, 0 allocs |
+| JSON 5 fields | 600.2 ns | 644.1 ns | both 0 B, 0 allocs |
+| JSON 50 fields | 2840 ns | 2677 ns | both 2049 B, 1 alloc |
+| JSON `[]time.Time` | 2623 ns | 1443 ns | 817 B/12 vs 0 B/0 |
+| Text message | 612.3 ns | 643.2 ns | both 0 B, 0 allocs |
+| Text 5 fields | 854.4 ns | 859.2 ns | both 0 B, 0 allocs |
+| Text 50 fields | 3181 ns | 2998 ns | both 2049 B, 1 alloc |
+| Text `[]int` | 1324 ns | 912.0 ns | 104 B/11 vs 0 B/0 |
 
-Post-change allocation profiling attributes 99.92% of the remaining
-`[]time.Time` allocations to `time.Time.Format`, called by the standard
-`Time.String` implementation. Replacing it with RFC3339 would remove those
-allocations but change observable text output, especially for monotonic times,
-so the compatible implementation is retained.
+The standard slog handlers are faster for small serial messages and a few
+small-field cases. Nexuer becomes faster in the larger-field cases shown above
+and has a larger advantage for the listed slice values. Struct and generic
+fallback cases are closer because both implementations use reflection-based
+encoding or formatting.
 
-## Full Result: 2026-07-11
+WritePath forces a real `Write` call to a no-op writer. Nexuer includes its
+writer lock, while benchmarks do not add locks to third-party libraries:
+
+| Scenario | Nexuer | zap | zerolog | phuslu | slog | logrus |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Serial message | 225.2 ns | 311.1 ns | 164.0 ns | 131.4 ns | 436.4 ns | 1114 ns |
+| Parallel message | 207.2 ns | 43.18 ns | 29.64 ns | 24.02 ns | 222.0 ns | 1445 ns |
+| Serial short fields | 408.1 ns | 441.3 ns | 212.8 ns | 157.4 ns | 604.0 ns | 1968 ns |
+| Parallel short fields | 254.6 ns | 145.8 ns | 35.73 ns | 21.27 ns | 265.6 ns | 2395 ns |
+
+Nexuer is faster than standard slog in all four WritePath cases and faster than
+zap in both serial cases. Its parallel results remain close to slog and trail
+the libraries that do not serialize writes in this benchmark. This difference
+reflects writer synchronization policy rather than encoder performance.
+
+## Full Result
 
 Command:
 
