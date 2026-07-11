@@ -17,11 +17,18 @@ var (
 )
 
 var (
+	// DefaultCaller returns the call site for standard Logger APIs.
+	// Logging wrappers should adjust it with AddCallerDepth.
+	DefaultCaller = Caller(9)
+
+	// DefaultTimestamp is a Valuer that returns the current wallclock time.
+	DefaultTimestamp = Timestamp(time.RFC3339)
+
 	// DefaultFields is a read-only template for adding the default timestamp
 	// and caller fields. Callers must not mutate it or modify it concurrently.
 	DefaultFields = []Field{
-		Dynamic("ts", Timestamp(time.RFC3339)),
-		Dynamic("caller", Caller(9)),
+		Dynamic("ts", DefaultTimestamp),
+		Dynamic("caller", DefaultCaller),
 	}
 )
 
