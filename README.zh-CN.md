@@ -108,12 +108,13 @@ logger.InfoS("ready", "port", 8080)
 ```go
 native := log.New(os.Stdout, log.Json(&log.HandlerOptions{Name: "server"})).
 	SetLevel(log.LevelInfo)
-logger := slog.New(native.SlogHandler())
+logger := slog.New(log.NewSlogHandler(native))
 logger.Info("ready", "port", 8080)
 ```
 
-`Logger.SlogHandler` 会保留 Logger 当前的输出、级别、handler、字段和
-group，只输出 `level`、`msg` 和用户字段。
+`NewSlogHandler` 会取得 Logger 当前输出、级别、handler、字段、group 和 context
+的快照；之后对 Logger 的修改不会影响已经返回的 handler。它只输出 `level`、`msg`
+和用户字段。
 `slog.Record.Time` 和 `slog.Record.PC` 始终会被忽略。
 `HandlerOptions.Replacer` 可以转换、重命名或删除用户字段，以及 `level`、`msg`、
 `logger` 三个内置字段。返回空 `Field` 会删除字段。包括内置 key 在内，重复 key 仍然允许。

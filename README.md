@@ -111,12 +111,13 @@ Nexuer handlers can be used behind the standard `log/slog` API:
 ```go
 native := log.New(os.Stdout, log.Json(&log.HandlerOptions{Name: "server"})).
 	SetLevel(log.LevelInfo)
-logger := slog.New(native.SlogHandler())
+logger := slog.New(log.NewSlogHandler(native))
 logger.Info("ready", "port", 8080)
 ```
 
-`Logger.SlogHandler` preserves the Logger's current output, level, handler,
-fields, and groups. It outputs `level`, `msg`, and user
+`NewSlogHandler` takes a snapshot of the Logger's current output, level,
+handler, fields, groups, and context. Later changes to the Logger do not affect
+the returned handler. It outputs `level`, `msg`, and user
 attributes only. `slog.Record.Time` and `slog.Record.PC` are always ignored.
 `HandlerOptions.Replacer` can transform, rename, or remove user attributes and
 the built-in `level`, `msg`, and `logger` fields. Returning an empty `Field`

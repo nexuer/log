@@ -62,14 +62,14 @@ func BenchmarkSlogHandlers(b *testing.B) {
 			standard: func(w io.Writer) slog.Handler {
 				return metadataStrippingHandler{Handler: slog.NewJSONHandler(w, nil)}
 			},
-			nexuer: func(w io.Writer) slog.Handler { return nlog.New(w, nlog.Json()).SlogHandler() },
+			nexuer: func(w io.Writer) slog.Handler { return nlog.NewSlogHandler(nlog.New(w, nlog.Json())) },
 		},
 		{
 			name: "Text",
 			standard: func(w io.Writer) slog.Handler {
 				return metadataStrippingHandler{Handler: slog.NewTextHandler(w, nil)}
 			},
-			nexuer: func(w io.Writer) slog.Handler { return nlog.New(w, nlog.Text()).SlogHandler() },
+			nexuer: func(w io.Writer) slog.Handler { return nlog.NewSlogHandler(nlog.New(w, nlog.Text())) },
 		},
 	} {
 		b.Run(format.name, func(b *testing.B) {
@@ -115,7 +115,7 @@ func BenchmarkNexuerSlogDefaultFields(b *testing.B) {
 					}{
 						{"DefaultFields", func() func() {
 							native := nlog.New(benchmarkDiscardWriter{}, format.handler()).WithFields(nlog.DefaultFields...)
-							logger := slog.New(native.SlogHandler())
+							logger := slog.New(nlog.NewSlogHandler(native))
 							return func() { logger.Info(getMessage(0)) }
 						}},
 						{"LoggerDepth1", func() func() {
@@ -123,13 +123,13 @@ func BenchmarkNexuerSlogDefaultFields(b *testing.B) {
 							native := nlog.New(benchmarkDiscardWriter{}, format.handler()).
 								WithContext(ctx).
 								WithFields(nlog.DefaultFields...)
-							logger := slog.New(native.SlogHandler())
+							logger := slog.New(nlog.NewSlogHandler(native))
 							return func() { logger.Info(getMessage(0)) }
 						}},
 						{"CallDepth1", func() func() {
 							ctx := nlog.AddCallerDepth(context.Background(), 1)
 							native := nlog.New(benchmarkDiscardWriter{}, format.handler()).WithFields(nlog.DefaultFields...)
-							logger := slog.New(native.SlogHandler())
+							logger := slog.New(nlog.NewSlogHandler(native))
 							return func() { logger.LogAttrs(ctx, slog.LevelInfo, getMessage(0)) }
 						}},
 						{"MergedDepth2", func() func() {
@@ -138,7 +138,7 @@ func BenchmarkNexuerSlogDefaultFields(b *testing.B) {
 							native := nlog.New(benchmarkDiscardWriter{}, format.handler()).
 								WithContext(loggerCtx).
 								WithFields(nlog.DefaultFields...)
-							logger := slog.New(native.SlogHandler())
+							logger := slog.New(nlog.NewSlogHandler(native))
 							return func() { logger.LogAttrs(callCtx, slog.LevelInfo, getMessage(0)) }
 						}},
 					} {

@@ -18,7 +18,7 @@ func TestSlogJSONHandlerMatchesNativeOutput(t *testing.T) {
 	New(&native, Json()).WarnS("done", "id", 1, "ok", true)
 
 	var adapted bytes.Buffer
-	logger := slog.New(New(&adapted, Json()).SlogHandler())
+	logger := slog.New(NewSlogHandler(New(&adapted, Json())))
 	logger.LogAttrs(context.Background(), slog.LevelWarn, "done", slog.Int("id", 1), slog.Bool("ok", true))
 
 	if got, want := adapted.String(), native.String(); got != want {
@@ -34,7 +34,7 @@ func TestSlogTextHandlerMatchesNativeOutput(t *testing.T) {
 	New(&native, Text()).WarnS("done", "id", 1, "ok", true)
 
 	var adapted bytes.Buffer
-	logger := slog.New(New(&adapted, Text()).SlogHandler())
+	logger := slog.New(NewSlogHandler(New(&adapted, Text())))
 	logger.LogAttrs(context.Background(), slog.LevelWarn, "done", slog.Int("id", 1), slog.Bool("ok", true))
 
 	if got, want := adapted.String(), native.String(); got != want {
@@ -44,7 +44,7 @@ func TestSlogTextHandlerMatchesNativeOutput(t *testing.T) {
 
 func TestSlogHandlerIgnoresRecordTimeAndPC(t *testing.T) {
 	var buf bytes.Buffer
-	handler := New(&buf, Json()).SlogHandler()
+	handler := NewSlogHandler(New(&buf, Json()))
 	record := slog.NewRecord(time.Unix(123, 456), slog.LevelInfo, "done", 12345)
 	record.AddAttrs(slog.String("id", "req-1"))
 	if err := handler.Handle(context.Background(), record); err != nil {
@@ -58,7 +58,7 @@ func TestSlogHandlerIgnoresRecordTimeAndPC(t *testing.T) {
 }
 
 func TestSlogHandlerLevel(t *testing.T) {
-	handler := New(io.Discard, Json()).SetLevel(LevelWarn).SlogHandler()
+	handler := NewSlogHandler(New(io.Discard, Json()).SetLevel(LevelWarn))
 	if handler.Enabled(context.Background(), slog.LevelInfo) {
 		t.Fatal("Info unexpectedly enabled")
 	}
@@ -73,7 +73,7 @@ func TestSlogHandlerPreservesLoggerState(t *testing.T) {
 		SetLevel(LevelWarn).
 		With("service", "api").
 		WithGroup("request")
-	logger := slog.New(native.SlogHandler())
+	logger := slog.New(NewSlogHandler(native))
 
 	logger.Info("ignored")
 	logger.Warn("done", "id", "req-1")
@@ -81,6 +81,23 @@ func TestSlogHandlerPreservesLoggerState(t *testing.T) {
 	want := `{"logger":"server","level":"WARN","service":"api","msg":"done","request":{"id":"req-1"}}` + "\n"
 	if got := buf.String(); got != want {
 		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestNewSlogHandlerIsSnapshot(t *testing.T) {
+	var before, after bytes.Buffer
+	native := New(&before, Json()).SetLevel(LevelInfo)
+	logger := slog.New(NewSlogHandler(native))
+
+	native.SetOutput(&after).SetLevel(LevelError).SetHandler(Text())
+	logger.Info("snapshot")
+
+	want := `{"level":"INFO","msg":"snapshot"}` + "\n"
+	if got := before.String(); got != want {
+		t.Fatalf("snapshot output = %q, want %q", got, want)
+	}
+	if got := after.String(); got != "" {
+		t.Fatalf("updated Logger output = %q, want empty", got)
 	}
 }
 
@@ -92,7 +109,7 @@ func TestSlogHandlerMergesCallerDepth(t *testing.T) {
 	native := New(&buf, Json()).
 		WithContext(AddCallerDepth(context.Background(), 2)).
 		With("depth", depthValue)
-	logger := slog.New(native.SlogHandler())
+	logger := slog.New(NewSlogHandler(native))
 
 	logger.Info("native-depth")
 	logger.LogAttrs(AddCallerDepth(context.Background(), 3), slog.LevelInfo, "merged-depth")
@@ -107,7 +124,7 @@ func TestSlogHandlerMergesCallerDepth(t *testing.T) {
 
 func TestSlogHandlerCaller(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(New(&buf, Json()).WithFields(DefaultFields...).SlogHandler())
+	logger := slog.New(NewSlogHandler(New(&buf, Json()).WithFields(DefaultFields...)))
 	logger.Info("caller")
 	var record struct {
 		Caller Source `json:"caller"`
@@ -117,6 +134,25 @@ func TestSlogHandlerCaller(t *testing.T) {
 	}
 	if !strings.HasSuffix(record.Caller.Function, ".TestSlogHandlerCaller") {
 		t.Fatalf("caller function = %q, want TestSlogHandlerCaller", record.Caller.Function)
+	}
+}
+
+func TestNewSlogHandlerNilUsesDefaultCaller(t *testing.T) {
+	old := defaultLogger.Load()
+	defer defaultLogger.Store(old)
+
+	var buf bytes.Buffer
+	SetDefault(New(&buf, Json()).WithFields(DefaultFields...))
+	slog.New(NewSlogHandler(nil)).Info("caller")
+
+	var record struct {
+		Caller Source `json:"caller"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(record.Caller.Function, ".TestNewSlogHandlerNilUsesDefaultCaller") {
+		t.Fatalf("caller function = %q, want TestNewSlogHandlerNilUsesDefaultCaller", record.Caller.Function)
 	}
 }
 
@@ -135,7 +171,7 @@ func (h wrappedHandler) WithGroup(name string) Handler {
 func TestSlogHandlerAdaptsCustomHandler(t *testing.T) {
 	var buf bytes.Buffer
 	native := New(&buf, wrappedHandler{Handler: Json()}).With("service", "api")
-	logger := slog.New(native.SlogHandler()).WithGroup("request")
+	logger := slog.New(NewSlogHandler(native)).WithGroup("request")
 	logger.Info("done", "id", 42)
 
 	want := `{"level":"INFO","service":"api","msg":"done","request":{"id":42}}` + "\n"
@@ -147,7 +183,7 @@ func TestSlogHandlerAdaptsCustomHandler(t *testing.T) {
 func TestCustomSlogHandlerResolvesWithAttrsLogValuerLazily(t *testing.T) {
 	var buf bytes.Buffer
 	valuer := new(countingSlogValuer)
-	logger := slog.New(New(&buf, wrappedHandler{Handler: Json()}).SlogHandler()).
+	logger := slog.New(NewSlogHandler(New(&buf, wrappedHandler{Handler: Json()}))).
 		With("dynamic", valuer)
 	if got := valuer.Calls(); got != 0 {
 		t.Fatalf("LogValuer calls after With = %d, want 0", got)
@@ -168,7 +204,7 @@ func TestCustomSlogHandlerResolvesWithAttrsLogValuerLazily(t *testing.T) {
 
 func TestSlogHandlerWithAttrsAndGroups(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(New(&buf, Json()).SlogHandler()).
+	logger := slog.New(NewSlogHandler(New(&buf, Json()))).
 		With("service", "api").
 		WithGroup("request").
 		With("id", "req-1").
@@ -202,7 +238,7 @@ func (v *countingSlogValuer) Calls() int {
 func TestSlogHandlerResolvesWithAttrsLogValuerLazily(t *testing.T) {
 	var buf bytes.Buffer
 	valuer := new(countingSlogValuer)
-	logger := slog.New(New(&buf, Json()).SlogHandler()).With("dynamic", valuer)
+	logger := slog.New(NewSlogHandler(New(&buf, Json()))).With("dynamic", valuer)
 	if got := valuer.Calls(); got != 0 {
 		t.Fatalf("LogValuer calls after With = %d, want 0", got)
 	}
@@ -223,7 +259,7 @@ func TestSlogHandlerResolvesWithAttrsLogValuerLazily(t *testing.T) {
 func TestSlogHandlerLazyPathPreservesPriorAttrsAndGroups(t *testing.T) {
 	var buf bytes.Buffer
 	valuer := new(countingSlogValuer)
-	logger := slog.New(New(&buf, Json()).SlogHandler()).
+	logger := slog.New(NewSlogHandler(New(&buf, Json()))).
 		With("service", "api").
 		WithGroup("request").
 		With("dynamic", valuer).
@@ -243,7 +279,7 @@ func TestSlogHandlerLazyPathContinuesNativeGroups(t *testing.T) {
 		With("service", "api").
 		WithGroup("request").
 		With("request_id", "req-1")
-	logger := slog.New(native.SlogHandler()).
+	logger := slog.New(NewSlogHandler(native)).
 		With("dynamic", valuer).
 		WithGroup("user")
 	logger.Info("done", "id", 42)
@@ -257,7 +293,7 @@ func TestSlogHandlerLazyPathContinuesNativeGroups(t *testing.T) {
 func TestSlogHandlerReplacerCanDeleteBuiltIns(t *testing.T) {
 	var buf bytes.Buffer
 	var calls []string
-	handler := New(&buf, Json(&HandlerOptions{
+	handler := NewSlogHandler(New(&buf, Json(&HandlerOptions{
 		Replacer: func(_ context.Context, groups []string, field Field) Field {
 			calls = append(calls, strings.Join(groups, ".")+":"+field.Key)
 			switch field.Key {
@@ -269,7 +305,8 @@ func TestSlogHandlerReplacerCanDeleteBuiltIns(t *testing.T) {
 				return field
 			}
 		},
-	})).SlogHandler()
+	})))
+
 	logger := slog.New(handler).WithGroup("request")
 	logger.Info("done", "secret", "token", "status", 200)
 
@@ -296,7 +333,7 @@ func TestSlogHandlerOmitsWithGroupEmptiedByReplacer(t *testing.T) {
 		}
 		return field
 	}
-	logger := slog.New(New(&buf, Json(&HandlerOptions{Replacer: replacer})).SlogHandler()).
+	logger := slog.New(NewSlogHandler(New(&buf, Json(&HandlerOptions{Replacer: replacer})))).
 		With(slog.Group("credentials", slog.String("secret", "token")))
 	logger.Info("done", "id", 1)
 	want := `{"level":"INFO","msg":"done","id":1}` + "\n"
@@ -308,7 +345,7 @@ func TestSlogHandlerOmitsWithGroupEmptiedByReplacer(t *testing.T) {
 func TestSlogHandlerNameWithLazyAttrs(t *testing.T) {
 	var buf bytes.Buffer
 	valuer := new(countingSlogValuer)
-	logger := slog.New(New(&buf, Json(&HandlerOptions{Name: "server"})).SlogHandler()).
+	logger := slog.New(NewSlogHandler(New(&buf, Json(&HandlerOptions{Name: "server"})))).
 		With("service", "api").
 		With("dynamic", valuer)
 	logger.Info("done", "id", 42)
@@ -322,7 +359,7 @@ func TestSlogHandlerNameWithLazyAttrs(t *testing.T) {
 func TestSlogHandlerOwnsWithAttrsSlice(t *testing.T) {
 	var buf bytes.Buffer
 	attrs := []slog.Attr{slog.String("service", "api")}
-	handler := New(&buf, Json()).SlogHandler().WithAttrs(attrs)
+	handler := NewSlogHandler(New(&buf, Json())).WithAttrs(attrs)
 	attrs[0] = slog.String("service", "mutated")
 	if err := handler.Handle(context.Background(), slog.NewRecord(time.Time{}, slog.LevelInfo, "done", 0)); err != nil {
 		t.Fatal(err)
@@ -336,7 +373,7 @@ func TestSlogHandlerOwnsWithAttrsSlice(t *testing.T) {
 
 func TestSlogHandlerConcurrentWrites(t *testing.T) {
 	var buf bytes.Buffer
-	logger := slog.New(New(&buf, Json()).SlogHandler())
+	logger := slog.New(NewSlogHandler(New(&buf, Json())))
 	const count = 100
 	var wg sync.WaitGroup
 	wg.Add(count)
@@ -365,7 +402,7 @@ func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
 
 func TestSlogHandlerReturnsWriterError(t *testing.T) {
 	want := errors.New("write failed")
-	handler := New(errorWriter{err: want}, Json()).SlogHandler()
+	handler := NewSlogHandler(New(errorWriter{err: want}, Json()))
 	err := handler.Handle(context.Background(), slog.NewRecord(time.Time{}, slog.LevelInfo, "done", 0))
 	if !errors.Is(err, want) {
 		t.Fatalf("error = %v, want %v", err, want)

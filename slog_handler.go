@@ -23,7 +23,27 @@ type slogHandler struct {
 	lazy     bool
 }
 
-func newSlogHandler(common *commonHandler, w io.Writer, level Level, ctx context.Context) *slogHandler {
+// NewSlogHandler returns a slog.Handler snapshot of logger's current output,
+// level, handler, accumulated fields, groups, and context. Later changes to
+// logger do not affect the returned handler.
+//
+// If logger is nil, NewSlogHandler uses the package default Logger.
+func NewSlogHandler(logger *Logger) slog.Handler {
+	if logger == nil {
+		logger = defaultLogger.Load()
+		logger = logger.WithContext(adjustCallerDepth(logger.ctx, -1))
+	}
+	switch h := logger.handler.(type) {
+	case *jsonHandler:
+		return newBuiltinSlogHandler(h.handler, logger.Writer(), logger.level, logger.ctx)
+	case *textHandler:
+		return newBuiltinSlogHandler(h.handler, logger.Writer(), logger.level, logger.ctx)
+	default:
+		return &loggerSlogHandler{logger: logger.clone()}
+	}
+}
+
+func newBuiltinSlogHandler(common *commonHandler, w io.Writer, level Level, ctx context.Context) *slogHandler {
 	return &slogHandler{
 		base:   common,
 		common: common,
