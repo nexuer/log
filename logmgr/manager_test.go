@@ -324,10 +324,89 @@ func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
 	server := m.Printer("worker")
 	db := m.MustAddScope("db")
 	mysql := db.Printer("mysql")
+	for _, scope := range m.Scopes() {
+		if got := *scope.config.Format; got != JsonFormat {
+			t.Fatalf("scope %s format = %v, want json", scope.Name(), got)
+		}
+		if got := *scope.config.File.Size; got != 128 {
+			t.Fatalf("scope %s file size = %d, want 128", scope.Name(), got)
+		}
+		if got := *scope.config.File.Backups; got != 3 || !*scope.config.File.Compress {
+			t.Fatalf("scope %s did not apply global file rotation flags", scope.Name())
+		}
+	}
+	if got := *db.config.Level; got != log.LevelDebug {
+		t.Fatalf("db level = %v, want debug", got)
+	}
 
 	server.Info("filtered by global error level")
 	server.Error("global error")
 	mysql.Debug("scope debug")
+}
+
+func TestGlobalFormatPreservesScopeOutput(t *testing.T) {
+	resetDefault(t)
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	AddFlags(fs)
+	if err := fs.Parse([]string{"--log-format=json"}); err != nil {
+		t.Fatal(err)
+	}
+	m := Init("server", WithFormat(TextFormat), WithOutput(StderrOutput))
+	t.Cleanup(func() { _ = m.Close() })
+	dir := t.TempDir()
+	db := m.MustAddScope("db", WithFormat(TextFormat), WithOutput(FileOutput), WithFileDir(dir))
+	mysql := db.Printer("mysql")
+	m.Printer("http")
+	m.Printer("grpc")
+	if got := m.DefaultScope().entries["server.http"].logger.Writer(); got != os.Stderr {
+		t.Fatalf("http writer = %T, want stderr", got)
+	}
+	if got := m.DefaultScope().entries["server.grpc"].logger.Writer(); got != os.Stderr {
+		t.Fatalf("grpc writer = %T, want stderr", got)
+	}
+	if got := *m.DefaultScope().config.Format; got != JsonFormat {
+		t.Fatalf("default format = %v, want json", got)
+	}
+	// Apply must retain CLI format precedence and the scope's file output.
+	db.Apply(WithFormat(TextFormat), WithLevel(log.LevelDebug))
+	mysql.Info("query completed")
+	data, err := os.ReadFile(dir + "/db.mysql.log")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]interface{}
+	if err := json.Unmarshal(data, &record); err != nil {
+		t.Fatalf("file log is not JSON: %s: %v", data, err)
+	}
+	if record["msg"] != "query completed" {
+		t.Fatalf("unexpected file log: %s", data)
+	}
+}
+
+func TestLogSetFormatPrecedence(t *testing.T) {
+	resetDefault(t)
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	AddFlags(fs)
+	// Specificity determines precedence, even when scoped flags come first.
+	if err := fs.Parse([]string{
+		"--log-set=db.format=text",
+		"--log-set=format=json",
+		"--log-format=text",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	m := Init("server")
+	db := m.MustAddScope("db")
+	cache := m.MustAddScope("cache")
+	for _, scope := range []*Scope{m.DefaultScope(), cache} {
+		if got := *scope.config.Format; got != JsonFormat {
+			t.Fatalf("scope %s format = %v, want json", scope.Name(), got)
+		}
+	}
+	db.Apply(WithFormat(JsonFormat))
+	if got := *db.config.Format; got != TextFormat {
+		t.Fatalf("db format = %v, want text", got)
+	}
 }
 
 func TestLogSetOverridesNamedDefaultScope(t *testing.T) {

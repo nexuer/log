@@ -46,6 +46,77 @@ func TestLoggerLogCaller(t *testing.T) {
 	}
 }
 
+//go:noinline
+func logCallerWrapper(logger *log.Logger, ctx context.Context) error {
+	return logger.Log(ctx, log.LevelInfo, "caller")
+}
+
+//go:noinline
+func logCallerOuterWrapper(logger *log.Logger, ctx context.Context) error {
+	return logCallerWrapper(logger, ctx)
+}
+
+func TestLoggerLogCallerDepth(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		loggerDepth int
+		callDepth   int
+		call        func(*log.Logger, context.Context) error
+	}{
+		{"call context", 0, 1, logCallerWrapper},
+		{"logger context", 1, 0, logCallerWrapper},
+		{"both contexts", 1, 1, logCallerOuterWrapper},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			logger := log.New(&buf, log.Json()).WithFields(log.DefaultFields...).
+				WithContext(log.AddCallerDepth(context.Background(), tc.loggerDepth))
+			ctx := log.AddCallerDepth(context.Background(), tc.callDepth)
+			_, file, line, _ := runtime.Caller(0)
+			if err := tc.call(logger, ctx); err != nil {
+				t.Fatal(err)
+			}
+			caller := callerSource(t, buf.Bytes())
+			if !strings.HasSuffix(file, caller.File) || caller.Line != line+1 ||
+				!strings.Contains(caller.Function, "TestLoggerLogCallerDepth") {
+				t.Fatalf("caller = %#v, want test call at %s:%d", caller, file, line+1)
+			}
+		})
+	}
+}
+
+func TestLoggerLogValuerUsesCallContext(t *testing.T) {
+	type contextKey string
+	const key contextKey = "request"
+	const hidden contextKey = "hidden"
+	loggerCtx := log.AddCallerDepth(context.WithValue(context.Background(), key, "logger"), 1)
+	callCtx, cancel := context.WithCancel(context.WithValue(
+		context.WithValue(context.Background(), key, "call"), hidden, "not logged"))
+	cancel()
+	var buf bytes.Buffer
+	logger := log.New(&buf, log.Json()).WithContext(loggerCtx).WithFields(
+		log.Dynamic("request", func(ctx context.Context) log.Value {
+			if ctx.Err() != context.Canceled {
+				t.Error("Valuer did not receive call context cancellation")
+			}
+			return log.AnyValue(ctx.Value(key))
+		}),
+	)
+	if err := logger.Log(callCtx, log.LevelInfo, "context"); err != nil {
+		t.Fatal(err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["request"] != "call" {
+		t.Fatalf("request = %v, want call", record["request"])
+	}
+	if _, ok := record["hidden"]; ok {
+		t.Fatal("context value was logged without explicit configuration")
+	}
+}
+
 func TestPrinterCaller(t *testing.T) {
 	var buf bytes.Buffer
 	printer := log.NewPrinter(log.New(&buf, log.Json()).WithFields(log.DefaultFields...))

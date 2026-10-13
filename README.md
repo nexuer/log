@@ -1,254 +1,162 @@
 # log
 
-[简体中文](./README.zh-CN.md)
+[简体中文](./README.zh-CN.md) · [API reference](https://pkg.go.dev/github.com/nexuer/log) · [Logger management](./logmgr/README.md)
 
-`github.com/nexuer/log` is a small structured logging package inspired by Go's
-standard `log/slog`. It keeps the familiar print, printf, and structured logging
-methods while adding delayed field evaluation for values attached with `With`.
+Structured logging for Go with Text and JSON output, dynamic fields, and `log/slog` integration.
 
-Application-level logger management lives in the separate `logmgr` subpackage.
-
-## Install
+## Installation
 
 ```sh
 go get github.com/nexuer/log
 ```
 
-## Quick Start
+## Quick start
 
 ```go
 package main
 
 import (
-	"errors"
 	"os"
 
 	"github.com/nexuer/log"
 )
 
 func main() {
-	logger := log.New(os.Stdout).With(
-		"ts", log.DefaultTimestamp,
-		"caller", log.DefaultCaller,
-	)
-
-	logger.Info("server starting")
+	logger := log.New(os.Stderr)
+	logger.Info("server started")
 	logger.Infof("listening on %s", ":8080")
-	logger.InfoS("server started", "addr", ":8080")
-
-	err := errors.New("timeout")
-	logger.ErrorS("request failed", log.Err(err), "path", "/api")
+	logger.InfoS("request completed", "method", "GET", "status", 200)
 }
 ```
 
-Text output:
-
 ```text
-INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:15 msg="server starting"
-INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:16 msg="listening on :8080"
-INFO ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:17 msg="server started" addr=:8080
-ERROR ts=2026-06-26T17:30:00+08:00 caller=cmd/server.go:20 msg="request failed" err=timeout path=/api
+INFO msg="server started"
+INFO msg="listening on :8080"
+INFO msg="request completed" method=GET status=200
 ```
 
-## Logging Methods
+`Info` writes text, `Infof` formats text, and `InfoS` writes a message with fields.
+Debug, Warn, Error, and Fatal provide the same three forms. Fatal logs and exits with status 1.
 
-Each level has three method forms:
+## JSON and log levels
 
 ```go
-logger.Info(args ...any)                 // fmt.Sprint-style message
-logger.Infof(format string, args ...any) // fmt.Sprintf-style message
-logger.InfoS(msg string, kvs ...any)     // structured message and fields
-```
-
-Use `Info` for plain text, `Infof` for formatted text, and `InfoS` when the
-values should be emitted as fields:
-
-```go
-logger.Info("retry ", attempt, "/", max)
-logger.Infof("retry %d/%d", attempt, max)
-logger.InfoS("retry", "attempt", attempt, "max", max)
-```
-
-`Info(args...)` does not interpret key-value pairs as fields. For structured
-output, use the `S` methods.
-
-## Handlers
-
-The default handler is text:
-
-```go
-logger := log.New(os.Stdout, log.Text(&log.HandlerOptions{Name: "server"}))
-logger.InfoS("ready", "addr", ":8080")
-```
-
-Output:
-
-```text
-[server] INFO msg=ready addr=:8080
-```
-
-Use `Json` for JSON output:
-
-```go
-logger := log.New(os.Stdout, log.Json(&log.HandlerOptions{Name: "server"})).With(
-	"service", "api",
-	"ts", log.DefaultTimestamp,
-)
-
+logger := log.New(os.Stderr, log.Json(&log.HandlerOptions{Name: "server"}))
+logger.SetLevel(log.LevelInfo)
 logger.InfoS("ready", "port", 8080)
 ```
 
-Output:
-
 ```json
-{"logger":"server","level":"INFO","service":"api","ts":"2026-06-26T17:30:00+08:00","msg":"ready","port":8080}
+{"logger":"server","level":"INFO","msg":"ready","port":8080}
 ```
 
-### slog Handlers
+Text is the default format. `SetLevel` sets the minimum output level.
 
-Nexuer handlers can be used behind the standard `log/slog` API:
+## Fields
+
+Use `With` for shared fields and logging methods for fields on a single record.
+Both key-value pairs and typed fields are supported:
 
 ```go
-native := log.New(os.Stdout, log.Json(&log.HandlerOptions{Name: "server"})).
-	SetLevel(log.LevelInfo)
+logger := log.New(os.Stderr).With("service", "api")
+logger.InfoS("user login", log.String("user", "alice"), log.Int("attempt", 1))
+logger.ErrorS("request failed", log.Err(err), "path", "/api")
+```
+
+`log.Err(nil)` produces no field. `WithFields` accepts `[]log.Field`, and
+`log.Fields(...)` converts key-value pairs into fields. `slog.Attr` and
+`WithGroup` are also supported. Duplicate keys are preserved; arguments
+without a matching value use `<BAD_KEY>`.
+
+### Timestamp and caller
+
+New loggers have no timestamp or caller field. Add both with `DefaultFields`:
+
+```go
+logger := log.New(os.Stderr).WithFields(log.DefaultFields...)
+```
+
+Or add them individually:
+
+```go
+logger := log.New(os.Stderr).With(
+    "ts", log.DefaultTimestamp,
+    "caller", log.DefaultCaller,
+)
+```
+
+Do not modify `DefaultFields`. Logging wrappers should adjust caller depth by
+one for each wrapper frame:
+
+```go
+func Info(ctx context.Context, logger *log.Logger, msg string) error {
+    return logger.Log(log.AddCallerDepth(ctx, 1), log.LevelInfo, msg)
+}
+```
+
+`Caller(depth)` counts from where the Valuer is resolved. Use `DefaultCaller` for standard logging paths.
+
+### Valuer and context
+
+A `Valuer` runs when a record is written. Use it to read request fields from ctx:
+
+```go
+type traceKey struct{}
+
+logger := log.New(os.Stderr).WithFields(
+    log.Dynamic("trace_id", func(ctx context.Context) log.Value {
+        return log.AnyValue(ctx.Value(traceKey{}))
+    }),
+)
+ctx := context.WithValue(context.Background(), traceKey{}, "abc123")
+_ = logger.Log(ctx, log.LevelInfo, "request completed")
+```
+
+`Log(ctx, ...)` uses the supplied ctx and adds caller depth from the call and
+logger contexts. Other logging methods use the context set by `WithContext(ctx)`.
+Applications explicitly select which context values to log.
+
+## Printer and global logging
+
+Pass a `log.Printer` to code that only needs text logging:
+
+```go
+printer := log.NewPrinter(logger)
+printer.Info("server started")
+printer.Infof("listening on %s", ":8080")
+_, _ = printer.Write([]byte("message"))
+```
+
+Printer provides text and formatted methods for Debug, Info, Warn, and Error,
+plus `io.Writer`. Use Logger for structured fields.
+
+Package functions use the global Logger, which defaults to stderr with timestamp and caller fields:
+
+```go
+log.Info("server started")
+log.SetDefault(log.New(os.Stderr, log.Json()).WithFields(log.DefaultFields...))
+log.InfoS("ready", "port", 8080)
+```
+
+## log/slog integration
+
+```go
+native := log.New(os.Stderr, log.Json()).WithFields(log.DefaultFields...)
 logger := slog.New(log.NewSlogHandler(native))
 logger.Info("ready", "port", 8080)
 ```
 
-`NewSlogHandler` takes a snapshot of the Logger's current output, level,
-handler, fields, groups, and context. Later changes to the Logger do not affect
-the returned handler. It outputs `level`, `msg`, and user
-attributes only. `slog.Record.Time` and `slog.Record.PC` are always ignored.
-`HandlerOptions.Replacer` can transform, rename, or remove user attributes and
-the built-in `level`, `msg`, and `logger` fields. Returning an empty `Field`
-removes a field. Duplicate keys remain allowed, including built-in keys.
+`NewSlogHandler` uses a snapshot of the Logger's configuration. Later changes
+to the Logger do not update it. Timestamp and caller use dynamic fields;
+`slog.Record.Time` and `PC` are ignored. Use `HandlerOptions.Replacer` to
+transform, rename, or remove fields.
 
-## Fields
+## Logger management
 
-Typed field helpers are preferred when possible:
+Use [logmgr](./logmgr/README.md) for multiple components, file output, and CLI configuration.
 
-```go
-logger.InfoS("user login",
-	log.String("user", "alice"),
-	log.Int("attempt", 1),
-	log.Bool("ok", true),
-)
-```
-
-Plain key-value pairs are also supported:
-
-```go
-logger.InfoS("user login", "user", "alice", "attempt", 1)
-```
-
-`With`, `Fields`, and structured logging methods accept typed `Field` values,
-`slog.Attr` values, ordinary key-value pairs, groups, and delayed `Valuer`
-values in the same argument list. Their output order is preserved. An argument
-without a matching value is emitted under `<BAD_KEY>`.
-
-Records are ordered as logger name, level, fields accumulated with `With`,
-message, and fields supplied by the logging call. For JSON groups that span
-accumulated and call fields, the group remains a single object and the message
-is emitted after that object.
-
-Duplicate keys are allowed, including `level`, `msg`, and `logger`. Text output
-keeps every occurrence, and JSON output may therefore contain duplicate object
-members. JSON consumers commonly keep the last value, but this is parser
-dependent; avoid duplicates when interoperability requires one unambiguous
-value.
-
-Use `Err` for the standard error field. A nil error returns an empty field and
-is not emitted:
-
-```go
-logger.ErrorS("request failed", log.Err(err), "path", "/api")
-```
-
-`Fields` converts key-value pairs to reusable fields:
-
-```go
-fields := log.Fields("service", "api", "region", "cn")
-logger := log.New(os.Stdout).WithFields(fields...)
-```
-
-## Dynamic Fields
-
-`Valuer` delays evaluation until the record is written:
-
-```go
-logger := log.New(os.Stdout).WithFields(
-	log.Dynamic("ts", log.Timestamp(time.RFC3339)),
-)
-```
-
-Timestamp and caller fields are opt-in. Use `DefaultFields` to add the standard
-timestamp and correctly calibrated caller field:
-
-```go
-logger := log.New(os.Stdout).WithFields(log.DefaultFields...)
-```
-
-`DefaultFields` is a read-only package template and must not be mutated or
-modified concurrently.
-
-`Caller(depth)` is a low-level constructor. Its `depth` counts stack frames from
-where the dynamic value is resolved, not from the application's logging call,
-so the correct base depends on the logging path. Most Logger users should use
-`DefaultFields`. A package that wraps logging calls should add one frame per
-wrapper with `AddCallerDepth`:
-
-```go
-func Info(ctx context.Context, logger *log.Logger, msg string) {
-	logger.Log(log.AddCallerDepth(ctx, 1), log.LevelInfo, msg)
-}
-```
-
-This is useful for timestamps, caller data, request-scoped values, and other
-values that should not be computed when `With` is called.
-
-## Printer
-
-`Printer` is a restricted wrapper for code that should only emit plain log
-messages. It exposes print, printf, and `io.Writer` style methods only. It does
-not expose structured `S` methods, `With`, output changes, handler changes,
-`Close`, or `Fatal`.
-
-```go
-printer := log.NewPrinter(logger)
-
-printer.Info("server started")
-printer.Infof("listening on %s", ":8080")
-_, _ = printer.Write([]byte("message from io.Writer"))
-```
-
-Use `Logger` instead of `Printer` when structured fields are needed.
-
-## Global Logger
-
-```go
-log.SetDefault(log.New(os.Stdout).WithFields(log.DefaultFields...))
-
-log.Info("server starting")
-log.InfoS("server started", "addr", ":8080")
-log.ErrorS("request failed", log.Err(err), "path", "/api")
-```
-
-## Fatal
-
-`Fatal`, `Fatalf`, and `FatalS` write a fatal-level record and then exit with
-status code `1`.
-
-```go
-logger.FatalS("listen failed", log.Err(err), "addr", addr)
-```
-
-## Manager
-
-Use `github.com/nexuer/log/logmgr` when an application needs multiple logger
-instances, shared configuration, command-line flags, or scope-level
-configuration.
-
-See [logmgr/README.md](./logmgr/README.md).
+Configure Logger's `SetLevel`, `SetOutput`, and `SetHandler` before concurrent use.
+For runtime changes to managed logs, use logmgr's `Apply`.
 
 ## Benchmarks
 
@@ -257,4 +165,4 @@ cd benchmarks
 go test -run '^$' -bench=. -benchmem
 ```
 
-Full scenarios and latest raw output are in [benchmarks/README.md](./benchmarks/README.md).
+See [benchmarks](./benchmarks/README.md) for scenarios and results.

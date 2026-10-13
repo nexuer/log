@@ -38,10 +38,7 @@ func (m *Manager) isDefaultScope(name string) bool {
 }
 
 func (m *Manager) flagConfigs(name string) []*config {
-	if m.isDefaultScope(name) {
-		return []*config{defaultFlags.config, defaultFlags.set[""], defaultFlags.set[name]}
-	}
-	return []*config{defaultFlags.set[name]}
+	return []*config{defaultFlags.config, defaultFlags.set[""], defaultFlags.set[name]}
 }
 
 func (m *Manager) addScope(name string, opts ...Option) *Scope {

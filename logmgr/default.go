@@ -38,8 +38,8 @@ func M() *Manager {
 
 // AddFlags registers log manager flags on fs.
 //
-// Call AddFlags and parse the flag set before Init so the default scope can
-// apply parsed flag values when it is created.
+// Call AddFlags and parse the flag set before Init. Unscoped flags apply to all
+// scopes; named log-set values override them for the specified scope.
 func AddFlags(fs *flag.FlagSet) {
 	defaultFlags.AddFlags(fs)
 }

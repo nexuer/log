@@ -132,6 +132,9 @@ func (l *Logger) log(level Level, template string, fmtArgs []any, kvs ...any) er
 	return nil
 }
 
+// Log writes a record using ctx for dynamic values. Caller depth adjustments
+// from ctx and the logger's context are added together; other context values
+// come only from ctx.
 func (l *Logger) Log(ctx context.Context, level Level, msg string, kvs ...any) error {
 	if !l.level.Enable(level) {
 		return nil
@@ -139,7 +142,7 @@ func (l *Logger) Log(ctx context.Context, level Level, msg string, kvs ...any) e
 
 	if l.handler != nil {
 		// Log has one fewer wrapper frame than the level-specific methods.
-		return l.Handle(AddCallerDepth(ctx, -1), l.w, level, msg, kvs...)
+		return l.Handle(AddCallerDepth(ctx, callerDepth(l.ctx)-1), l.w, level, msg, kvs...)
 	}
 	return nil
 }

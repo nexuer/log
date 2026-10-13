@@ -111,7 +111,7 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 			},
 		},
 		"log-format",
-		fmt.Sprintf("Set log `format`. One of: text, json (default %q)", defaultFormat),
+		fmt.Sprintf("Set log `format` for all scopes. One of: text, json (default %q)", defaultFormat),
 	)
 	fs.Var(
 		flagValue{
@@ -171,7 +171,7 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 			},
 		},
 		"log-set",
-		"Set log config `key=value` or `scope.key=value`. Example: --log-set=db.level=warn",
+		"Set log config `key=value` for all scopes or `scope.key=value` for one scope. Scoped values take precedence. Example: --log-set=db.level=warn",
 	)
 }
 
