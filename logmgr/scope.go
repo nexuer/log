@@ -128,39 +128,40 @@ func (s *Scope) addLogger(name string) *logger {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l, ok := s.loggers[name]
-	if !ok {
-		l = &logger{}
-		initial := log.New(os.Stderr)
-		l.l.Store(initial.WithContext(log.AddCallerDepth(initial.Context(), 1)))
+	if ok {
+		return l
 	}
+	l = &logger{}
+	initial := log.New(os.Stderr)
+	l.Store(initial.WithContext(log.AddCallerDepth(initial.Context(), 1)))
 	l.apply(s.fullName(name), s.config, s.isDefaultLogger(name))
 	s.loggers[name] = l
 	return l
 }
 
 type logger struct {
-	l atomic.Pointer[log.Logger]
+	atomic.Pointer[log.Logger]
 }
 
 var _ log.Printer = (*logger)(nil)
 
-func (l *logger) Debug(args ...any)                 { l.l.Load().Debug(args...) }
-func (l *logger) Debugf(format string, args ...any) { l.l.Load().Debugf(format, args...) }
-func (l *logger) Info(args ...any)                  { l.l.Load().Info(args...) }
-func (l *logger) Infof(format string, args ...any)  { l.l.Load().Infof(format, args...) }
-func (l *logger) Warn(args ...any)                  { l.l.Load().Warn(args...) }
-func (l *logger) Warnf(format string, args ...any)  { l.l.Load().Warnf(format, args...) }
-func (l *logger) Error(args ...any)                 { l.l.Load().Error(args...) }
-func (l *logger) Errorf(format string, args ...any) { l.l.Load().Errorf(format, args...) }
-func (l *logger) Write(p []byte) (int, error)       { return l.l.Load().Write(p) }
+func (l *logger) Debug(args ...any)                 { l.Load().Debug(args...) }
+func (l *logger) Debugf(format string, args ...any) { l.Load().Debugf(format, args...) }
+func (l *logger) Info(args ...any)                  { l.Load().Info(args...) }
+func (l *logger) Infof(format string, args ...any)  { l.Load().Infof(format, args...) }
+func (l *logger) Warn(args ...any)                  { l.Load().Warn(args...) }
+func (l *logger) Warnf(format string, args ...any)  { l.Load().Warnf(format, args...) }
+func (l *logger) Error(args ...any)                 { l.Load().Error(args...) }
+func (l *logger) Errorf(format string, args ...any) { l.Load().Errorf(format, args...) }
+func (l *logger) Write(p []byte) (int, error)       { return l.Load().Write(p) }
 
 func (l *logger) logger() *log.Logger {
-	return l.l.Load()
+	return l.Load()
 }
 
 func (l *logger) apply(name string, config *config, isDefault bool) {
 	h := config.handler(name)
-	old := l.l.Load()
+	old := l.Load()
 	ctx := old.Context()
 	if len(config.Fields) > 0 {
 		h = h.WithFields(ctx, config.Fields...)
@@ -178,7 +179,7 @@ func (l *logger) apply(name string, config *config, isDefault bool) {
 		SetLevel(*config.Level).
 		WithContext(ctx)
 
-	l.l.Store(next)
+	l.Store(next)
 	// close old writer
 	if oldWriter != w {
 		closeWriter(oldWriter)
