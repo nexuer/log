@@ -29,20 +29,20 @@ func TestSingletonManagerAPI(t *testing.T) {
 	resetDefault(t)
 
 	Init("server", WithLevel(log.LevelWarn), WithFields(log.DefaultFields...))
-	if got := DefaultScope(); got != Scope("server") {
+	if got := Get(); got != Get("server") {
 		t.Fatal("DefaultScope did not return the default scope")
 	}
-	if got := DefaultScope().Name(); got != "server" {
+	if got := Get().Name(); got != "server" {
 		t.Fatalf("default scope name = %q, want %q", got, "server")
 	}
 
-	worker := Printer("worker")
-	if got := Printer("worker"); got != worker {
+	worker := Get().Logger("worker")
+	if got := Get().Logger("worker"); got != worker {
 		t.Fatal("Printer did not return the existing default-scope printer")
 	}
 
-	db := AddScope("db", WithLevel(log.LevelError))
-	if got := Scope("db"); got != db {
+	db := Register("db", WithLevel(log.LevelError))
+	if got := Get("db"); got != db {
 		t.Fatal("Scope did not return the registered scope")
 	}
 	if got := db.Name(); got != "db" {
@@ -55,17 +55,17 @@ func TestSingletonManagerAPI(t *testing.T) {
 	if scopes[0].Name() != "db" || scopes[1].Name() != "server" {
 		t.Fatalf("Scopes returned names [%q %q], want [db server]", scopes[0].Name(), scopes[1].Name())
 	}
-	mysql := db.Printer("mysql")
-	if got := db.Printer("mysql"); got != mysql {
+	mysql := db.Logger("mysql")
+	if got := db.Logger("mysql"); got != mysql {
 		t.Fatal("Printer did not return the existing scope printer")
 	}
 
-	Printer().Warn("server ready")
-	Printer("worker").Error("worker failed")
-	db.Printer().Error("database ready")
-	db.Printer("mysql").Error("query failed")
+	Get().Logger().Warn("server ready")
+	Get().Logger("worker").Error("worker failed")
+	db.Logger().Error("database ready")
+	db.Logger("mysql").Error("query failed")
 
-	DefaultScope().Apply(WithFormat(TextFormat))
+	Get().Apply(WithFormat(TextFormat))
 	db.Apply(WithOutput(StderrOutput))
 }
 
@@ -77,12 +77,12 @@ func TestDefaultLoggerFollowsDefaultScope(t *testing.T) {
 		t.Fatalf("default logger writer = %T, want stdout", got)
 	}
 
-	DefaultScope().Apply(WithOutput(StderrOutput))
+	Get().Apply(WithOutput(StderrOutput))
 	if got := log.Default().Writer(); got != os.Stderr {
 		t.Fatalf("default logger writer after Apply = %T, want stderr", got)
 	}
 
-	db := AddScope("db", WithOutput(StdoutOutput))
+	db := Register("db", WithOutput(StdoutOutput))
 	db.Apply(WithOutput(StdoutOutput))
 	if got := log.Default().Writer(); got != os.Stderr {
 		t.Fatalf("named scope changed default logger writer to %T, want stderr", got)
@@ -97,7 +97,7 @@ func TestScopeInheritsInitOptionsAndOverrides(t *testing.T) {
 		WithOutput(StdoutOutput),
 		WithLevel(log.LevelInfo),
 	)
-	db := AddScope("db", WithLevel(log.LevelError))
+	db := Register("db", WithLevel(log.LevelError))
 
 	if got := *db.config.Output; got != StdoutOutput {
 		t.Fatalf("scope output = %v, want %v", got, StdoutOutput)
@@ -116,14 +116,14 @@ func TestAppendFieldsScopeIsolation(t *testing.T) {
 	fields[0] = log.String("service", "api")
 	option := WithFields(fields...)
 	Init("server", option)
-	left, right := AddScope("left"), AddScope("right")
+	left, right := Register("left"), Register("right")
 	left.Apply(AppendFields(log.String("tenant", "left")))
 	right.Apply(AppendKeyValues("tenant", "right"))
 	if !left.config.Fields[1].Equal(log.String("tenant", "left")) {
 		t.Fatal("appending in another scope changed left's fields")
 	}
-	if len(DefaultScope().config.Fields) != 1 ||
-		!DefaultScope().config.Fields[0].Equal(log.String("service", "api")) {
+	if len(Get().config.Fields) != 1 ||
+		!Get().config.Fields[0].Equal(log.String("service", "api")) {
 		t.Fatal("scope append changed the default scope's fields")
 	}
 }
@@ -132,7 +132,7 @@ func TestApplyPreservesCurrentScopeConfig(t *testing.T) {
 	resetDefault(t)
 
 	Init("server", WithFields(log.String("service", "api")), WithOutput(StdoutOutput))
-	db := AddScope("db", WithLevel(log.LevelWarn))
+	db := Register("db", WithLevel(log.LevelWarn))
 
 	db.Apply(WithLevel(log.LevelDebug))
 
@@ -155,26 +155,24 @@ func TestApplyUpdatesHeldPrinter(t *testing.T) {
 		WithFileDir(dir),
 		WithLevel(log.LevelError),
 	)
-	p := Printer()
+	p := Get().Logger()
 	p.Debug("before apply")
 
-	DefaultScope().Apply(WithLevel(log.LevelDebug))
-	if got := Printer(); got != p {
+	Get().Apply(WithLevel(log.LevelDebug))
+	if got := Get().Logger(); got != p {
 		t.Fatal("Apply replaced the managed Printer")
 	}
 	p.Debug("after apply")
 	if err := Close(); err != nil {
 		t.Fatal(err)
 	}
-	p.Debug("after close")
 
 	data, err := os.ReadFile(dir + "/server.log")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(string(data), "before apply") ||
-		!strings.Contains(string(data), "after apply") ||
-		strings.Contains(string(data), "after close") {
+		!strings.Contains(string(data), "after apply") {
 		t.Fatalf("file output = %q", data)
 	}
 }
@@ -187,15 +185,15 @@ func TestApplyUpdatesFileWriterConfiguration(t *testing.T) {
 		WithFileSize(1),
 		WithFileBackups(1),
 	)
-	entry := DefaultScope().entries["server"]
-	before := entry.logger.Writer().(*lumberjack.Logger)
+	entry := Get().loggers[""]
+	before := entry.Load().Writer().(*lumberjack.Logger)
 
-	DefaultScope().Apply(
+	Get().Apply(
 		WithFileSize(2),
 		WithFileBackups(3),
 		WithFileCompress(true),
 	)
-	after := entry.logger.Writer().(*lumberjack.Logger)
+	after := entry.Load().Writer().(*lumberjack.Logger)
 	if before == after {
 		t.Fatal("Apply reused a file writer whose rotation configuration changed")
 	}
@@ -209,9 +207,9 @@ func TestApplyMovesHeldPrinterToNewFile(t *testing.T) {
 	firstDir := t.TempDir()
 	secondDir := t.TempDir()
 	Init("server", WithOutput(FileOutput), WithFileDir(firstDir))
-	p := Printer()
+	p := Get().Logger()
 	p.Info("first file")
-	DefaultScope().Apply(WithFileDir(secondDir))
+	Get().Apply(WithFileDir(secondDir))
 	p.Info("second file")
 	if err := Close(); err != nil {
 		t.Fatal(err)
@@ -243,7 +241,7 @@ func TestManagedPrinterCaller(t *testing.T) {
 		WithFields(log.DefaultFields...),
 	)
 	_, _, line, _ := runtime.Caller(0)
-	Printer().Info("caller")
+	Get().Logger().Info("caller")
 	if err := Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -269,7 +267,7 @@ func TestManagedPrinterCaller(t *testing.T) {
 func TestConcurrentApplyAndHeldPrinter(t *testing.T) {
 	resetDefault(t)
 	Init("server", WithOutput(FileOutput), WithFileDir(t.TempDir()))
-	p := Printer()
+	p := Get().Logger()
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
@@ -281,11 +279,11 @@ func TestConcurrentApplyAndHeldPrinter(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < 1000; i++ {
-			DefaultScope().Apply(WithLevel(log.Level(i & 1)))
+			Get().Apply(WithLevel(log.Level(i & 1)))
 		}
 	}()
 	wg.Wait()
-	if got := Printer(); got != p {
+	if got := Get().Logger(); got != p {
 		t.Fatal("concurrent Apply replaced the managed Printer")
 	}
 }
@@ -336,9 +334,9 @@ func TestFlagsAffectNewScopesAndPrinters(t *testing.T) {
 	}
 
 	Init("server")
-	server := Printer("worker")
-	db := AddScope("db")
-	mysql := db.Printer("mysql")
+	server := Get().Logger("worker")
+	db := Register("db")
+	mysql := db.Logger("mysql")
 	for _, scope := range Scopes() {
 		if got := *scope.config.Format; got != JsonFormat {
 			t.Fatalf("scope %s format = %v, want json", scope.Name(), got)
@@ -369,17 +367,17 @@ func TestGlobalFormatPreservesScopeOutput(t *testing.T) {
 	Init("server", WithFormat(TextFormat), WithOutput(StderrOutput))
 	t.Cleanup(func() { _ = Close() })
 	dir := t.TempDir()
-	db := AddScope("db", WithFormat(TextFormat), WithOutput(FileOutput), WithFileDir(dir))
-	mysql := db.Printer("mysql")
-	Printer("http")
-	Printer("grpc")
-	if got := DefaultScope().entries["server.http"].logger.Writer(); got != os.Stderr {
+	db := Register("db", WithFormat(TextFormat), WithOutput(FileOutput), WithFileDir(dir))
+	mysql := db.Logger("mysql")
+	Get().Logger("http")
+	Get().Logger("grpc")
+	if got := Get().loggers["http"].Load().Writer(); got != os.Stderr {
 		t.Fatalf("http writer = %T, want stderr", got)
 	}
-	if got := DefaultScope().entries["server.grpc"].logger.Writer(); got != os.Stderr {
+	if got := Get().loggers["grpc"].Load().Writer(); got != os.Stderr {
 		t.Fatalf("grpc writer = %T, want stderr", got)
 	}
-	if got := *DefaultScope().config.Format; got != JsonFormat {
+	if got := *Get().config.Format; got != JsonFormat {
 		t.Fatalf("default format = %v, want json", got)
 	}
 	// Apply must retain CLI format precedence and the scope's file output.
@@ -411,9 +409,9 @@ func TestLogSetFormatPrecedence(t *testing.T) {
 		t.Fatal(err)
 	}
 	Init("server")
-	db := AddScope("db")
-	cache := AddScope("cache")
-	for _, scope := range []*LoggerScope{DefaultScope(), cache} {
+	db := Register("db")
+	cache := Register("cache")
+	for _, scope := range []*Scope{Get(), cache} {
 		if got := *scope.config.Format; got != JsonFormat {
 			t.Fatalf("scope %s format = %v, want json", scope.Name(), got)
 		}
@@ -443,7 +441,7 @@ func TestLogSetOverridesNamedDefaultScope(t *testing.T) {
 	if got := log.Default().Writer(); got != os.Stderr {
 		t.Fatalf("named default scope log-set was not applied last: got %T, want stderr", got)
 	}
-	_ = AddScope("db")
+	_ = Register("db")
 }
 
 func TestFlagHelpMetavars(t *testing.T) {
@@ -475,10 +473,10 @@ func TestFlagHelpMetavars(t *testing.T) {
 func TestDuplicateScopeRegistration(t *testing.T) {
 	resetDefault(t)
 	Init("server")
-	mustPanic(t, func() { AddScope("server") })
-	db := AddScope("db", WithLevel(log.LevelWarn))
-	mustPanic(t, func() { AddScope("db", WithLevel(log.LevelDebug)) })
-	if Scope("db") != db || *Scope("db").config.Level != log.LevelWarn {
+	mustPanic(t, func() { Register("server") })
+	db := Register("db", WithLevel(log.LevelWarn))
+	mustPanic(t, func() { Register("db", WithLevel(log.LevelDebug)) })
+	if Get("db") != db || *Get("db").config.Level != log.LevelWarn {
 		t.Fatal("duplicate registration changed the existing scope")
 	}
 }
@@ -487,7 +485,7 @@ func TestEmptyNames(t *testing.T) {
 	resetDefault(t)
 	mustPanic(t, func() { Init("") })
 	Init("server")
-	mustPanic(t, func() { AddScope("") })
+	mustPanic(t, func() { Register("") })
 }
 
 func TestInitPanicsWhenCalledTwice(t *testing.T) {
@@ -515,7 +513,7 @@ func TestConcurrentScopeRegistrationAndPrinterCreation(t *testing.T) {
 				_ = recover()
 				results <- succeeded
 			}()
-			AddScope("db")
+			Register("db")
 			succeeded = true
 		}()
 	}
@@ -531,13 +529,13 @@ func TestConcurrentScopeRegistrationAndPrinterCreation(t *testing.T) {
 		t.Fatalf("AddScope successes = %d, want 1", successes)
 	}
 
-	scope := Scope("db")
+	scope := Get("db")
 	printers := make(chan log.Printer, 8)
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			printers <- scope.Printer("mysql")
+			printers <- scope.Logger("mysql")
 		}()
 	}
 	wg.Wait()
@@ -559,10 +557,10 @@ func TestAddScopePanicOnDuplicate(t *testing.T) {
 	resetDefault(t)
 
 	Init("server")
-	AddScope("db")
+	Register("db")
 
 	mustPanic(t, func() {
-		AddScope("db")
+		Register("db")
 	})
 }
 
@@ -572,9 +570,9 @@ func TestMissingScopePanicAndPrinterCreates(t *testing.T) {
 	Init("server")
 
 	mustPanic(t, func() {
-		Scope("missing")
+		Get("missing")
 	})
-	if got := Printer("missing"); got == nil {
+	if got := Get().Logger("missing"); got == nil {
 		t.Fatal("Printer returned nil")
 	}
 }

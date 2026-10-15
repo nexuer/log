@@ -1,176 +1,138 @@
 # logmgr
 
-[简体中文](./README.zh-CN.md) · [API reference](https://pkg.go.dev/github.com/nexuer/log/logmgr) · [log](../README.md)
+[简体中文](./README.zh-CN.md) · [API reference](https://pkg.go.dev/github.com/nexuer/log/logmgr)
 
-Process-wide logger management for `log`. Scopes manage configuration;
-printers identify components. Includes CLI overrides and rotating files.
+Process-wide logging configuration for [log](../README.md), with named scopes,
+command-line options, and rotating files.
 
-## Quick start
+## Background
 
-```sh
-go get github.com/nexuer/log
-```
+A service often has HTTP, database, and worker components. They need centrally
+managed logging, but may have different requirements: HTTP logs go to the terminal,
+database logs go to files, and troubleshooting changes the level of just one group.
 
-This service sends http and grpc logs to stderr and db logs to files:
+logmgr uses a **scope as a configuration group**. Each scope manages loggers that
+share a level, format, output target, common fields, and rotation settings.
+Different scopes can be configured independently. Logger names identify components
+within a group, such as `server.http` and `server.grpc`.
+
+Keep components with the same configuration in one scope; create another scope
+when independent configuration is needed. For example, HTTP and gRPC can use the
+default `server` scope, while the database uses a separate `db` scope.
+With file output, each logger uses its full name as the filename; the directory
+and rotation settings are shared.
+
+## Features
+
+- **Global API**: initialize once and retrieve scopes and loggers by name.
+- **Grouped configuration**: new scopes inherit initialization options and can override them.
+- **Runtime updates**: Apply updates a whole scope, including cached loggers.
+- **CLI overrides**: configure all scopes or target a specific scope.
+- **Output and rotation**: Text and JSON formats, terminal output, and rotating files.
+- **Resource management**: Remove selected loggers or scopes; Close releases all resources on shutdown.
+
+## Usage
 
 ```go
 package main
 
 import (
-	"flag"
+    "flag"
 
-	"github.com/nexuer/log"
-	"github.com/nexuer/log/logmgr"
+    "github.com/nexuer/log"
+    "github.com/nexuer/log/logmgr"
 )
 
 func main() {
-	logmgr.AddFlags(flag.CommandLine)
-	flag.Parse()
+    logmgr.AddFlags(flag.CommandLine)
+    flag.Parse()
 
-	logmgr.Init("server",
-		logmgr.WithOutput(logmgr.StderrOutput),
-		logmgr.WithFields(log.DefaultFields...),
-	)
-	defer logmgr.Close()
+    logmgr.Init("server", logmgr.WithFields(log.DefaultFields...))
+    defer logmgr.Close()
 
-	db := logmgr.AddScope("db",
-		logmgr.WithOutput(logmgr.FileOutput),
-		logmgr.WithFileDir("log/db"),
-		logmgr.WithLevel(log.LevelWarn),
-	)
+    http := logmgr.Get().Logger("http")
+    http.Info("listening on :8080")
 
-	logmgr.Printer("http").Info("listening on :8080")
-	logmgr.Printer("grpc").Info("listening on :9090")
-	db.Printer("mysql").Warn("slow query")
+    db := logmgr.Register("db",
+        logmgr.WithOutput(logmgr.FileOutput),
+        logmgr.WithFileDir("log/db"),
+    )
+    db.Logger("mysql").Warn("slow query")
+
+    db.Apply(logmgr.WithLevel(log.LevelError))
 }
 ```
 
-Call `Init` once. Other packages can use `logmgr.Printer` and `logmgr.Scope`,
-or receive a `log.Printer`. All manager operations are package-level functions;
-`Init` has no return value. The scope type is `LoggerScope`.
+Call `Init` once before using other APIs. Scope names must be nonempty and unique.
 
-All scopes require a nonempty name, including the default scope created by
-`Init`. For example, the default printer from `Init("server")` writes to `server.log`.
+## Scopes and loggers
 
-## Scopes and printers
+A scope shares configuration among its loggers. New scopes inherit `Init` options.
 
-Printers in a scope share level, format, output, and rotation settings.
-New scopes inherit `Init` options, then apply their own options.
+| API | Purpose |
+|---|---|
+| `Get()` / `Get(name)` | Get the default or a named scope; panic if missing |
+| `Register(name, opts...)` | Create a scope |
+| `Lookup(name)` | Get a scope and whether it exists |
+| `Scopes()` | List scopes sorted by name |
+| `scope.Logger(name...)` | Get or create a logger |
+| `scope.Apply(opts...)` | Update configuration, including cached loggers |
+
+Logger names are relative to the scope:
 
 ```go
-logmgr.Printer()                    // server
-logmgr.Printer("http")              // server.http
-logmgr.Scope("db").Printer()        // db
-logmgr.Scope("db").Printer("mysql") // db.mysql
+logmgr.Get().Logger()              // server
+logmgr.Get().Logger("http")        // server.http
+logmgr.Get("db").Logger("mysql")   // db.mysql
 ```
 
-Register scopes with `AddScope(name, opts...)`; empty or duplicate names panic.
-`Scope(name)` only retrieves a registered scope;
-it does not create scopes or change configuration, and panics if missing.
-Use `AddScope(name, opts...)` to configure a new scope and `scope.Apply(opts...)`
-to update an existing one. Printers are created and reused by name.
-`logmgr.Scopes()` lists registered scopes sorted by name.
+File output uses `<file-dir>/<full logger name>.log`.
+For example, the mysql logger above writes to `log/db/db.mysql.log`.
+The default scope also configures `log.Default()`.
 
-Printers write to `<file-dir>/<full logger name>.log`.
-For the db scope above:
+Use `WithFields` / `AppendFields` for `log.Field` values and
+`WithKeyValues` / `AppendKeyValues` for key-value pairs.
+See the [API reference](https://pkg.go.dev/github.com/nexuer/log/logmgr) for all options.
 
-| Printer | File |
+## Command-line configuration
+
+Register and parse flags before `Init`. Only explicitly supplied flags override code options.
+
+| Flag | Default |
 |---|---|
-| `db.Printer()` | `log/db/db.log` |
-| `db.Printer("mysql")` | `log/db/db.mysql.log` |
+| `--log-level` | `info` |
+| `--log-format` | `text` |
+| `--log-output` | `stderr` |
+| `--log-file-dir` | `log` |
+| `--log-file-size` | `512` MB; 0 uses the default |
+| `--log-file-backups` | `0` (unlimited) |
+| `--log-file-compress` | `false` |
 
-Printers in different scopes may write to the same file when their full logger
-names and directories match. For example, the `mysql` printer in scope `db` and
-the default printer in scope `db.mysql` both write to `db.mysql.log` in the same directory.
-
-Use `LookupScope(name)` when a scope may be absent; it returns `(*LoggerScope, bool)`
-and does not create or change configuration. Like `Scope`, it panics before
-`Init` or after `Close`. Lookup does not prevent concurrent removal.
-
-## CLI configuration
-
-Register and parse flags before `Init`. Global flags affect every scope;
-scoped `log-set` values take precedence.
+Use `--log-set` for global or scope-specific overrides:
 
 ```sh
-app --log-format=json
-app --log-format=json --log-set=db.format=text
-app --log-level=info --log-set=db.level=warn
+app --log-format=json --log-set=db.level=warn
+app --log-set=output=file --log-set=db.file-dir=log/db
 ```
 
-The first command uses JSON for all scopes; http and grpc still write to stderr,
-and db still writes to files. The second keeps Text output for db.
-
-| Flag | Default | Values / units |
-|---|---|---|
-| `--log-level` | `info` | debug, info, warn, error, fatal |
-| `--log-format` | `text` | text, json |
-| `--log-output` | `stderr` | stderr, stdout, file |
-| `--log-file-dir` | `log` | File directory |
-| `--log-file-size` | `512` | MB; 0 uses the default |
-| `--log-file-backups` | `0` | Backup count; 0 means unlimited |
-| `--log-file-compress` | `false` | gzip compression |
-
-Defaults apply when an option has not been configured in code. CLI flags only
-override explicitly supplied fields. `--log-set` accepts the fields above
-without the `log-` prefix:
-
-```sh
---log-set=format=json
---log-set=db.output=file
---log-set=db.file-dir=log/db
-```
-
-Configuration precedence, lowest to highest:
+Precedence, lowest to highest:
 
 ```text
-Defaults → Init options → Scope options → Global flags → log-set=key=value → log-set=scope.key=value
+Defaults → Init options → Scope options / Apply → Global flags → log-set=key=value → log-set=scope.key=value
 ```
-
-## Runtime configuration
-
-```go
-logmgr.DefaultScope().Apply(logmgr.WithLevel(log.LevelWarn)) // Default scope
-logmgr.Scope("db").Apply(logmgr.WithLevel(log.LevelError)) // db scope
-```
-
-Existing printers use the updated configuration. `Apply` can run concurrently
-with logging. Explicit CLI fields retain precedence over `Apply`.
-
-Fields and Replacer can also be configured through options:
-
-```go
-logmgr.WithFields(log.String("service", "api"))
-logmgr.AppendFields(log.String("component", "db"))
-logmgr.WithKeyValues("service", "api")
-logmgr.WithReplacer(replacer)
-```
-
-See the [API reference](https://pkg.go.dev/github.com/nexuer/log/logmgr) for all options.
-Call `logmgr.Close()` on shutdown to close managed outputs.
 
 ## Releasing resources
 
 ```go
-logmgr.Remove("db", "mysql", "redis") // Remove printers by scope-relative names.
-logmgr.Remove("db", "")              // Remove db's default printer.
+logmgr.Remove("db", "mysql", "redis") // Remove selected loggers.
+logmgr.Remove("db", "")              // Remove the scope's default logger.
 logmgr.Remove("db")                  // Remove the entire scope.
 ```
 
-`Remove` unregisters resources, closes their outputs, and returns close errors.
-Missing scopes or printers are ignored. The default scope and its default printer
-cannot be removed; other printers within the default scope can be removed.
-Held printers stop output after removal. After an entire scope is removed, its
-old `Printer` and nonempty `Apply` calls panic. Recreating the same name does not
-reactivate old references.
+Remove closes outputs and deletes registrations. Missing targets are ignored.
+The default scope and its default logger are protected.
+Do not continue using removed scopes or loggers.
 
-`logmgr.Close()` closes all managed outputs; repeated calls succeed. After closing,
-scope access, printer creation, configuration changes, and another `Init` panic.
-Held printers stop output.
-
-Printer calls atomically load a configuration snapshot without a printer lock.
-`Apply`, `Remove`, and `Close` do not wait for calls using an older snapshot.
-Those calls may still attempt to write to the previous output after it is closed;
-write failures are handled by `log.ErrorHandler` (or returned by `Printer.Write`).
-Whether a closed writer rejects writes or reopens its output depends on that
-writer. Stop logging goroutines before calling `Close` on shutdown.
+Stop logging before calling `Close` on shutdown. It closes all outputs and clears
+registrations. Repeated calls succeed; registration and reinitialization are no
+longer allowed.

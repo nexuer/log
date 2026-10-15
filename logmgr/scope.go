@@ -1,6 +1,8 @@
 package logmgr
 
 import (
+	"fmt"
+	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -12,6 +14,7 @@ const (
 	defaultLoggerName = ""
 )
 
+// Scope groups loggers sharing the same configuration.
 type Scope struct {
 	manager *manager
 
@@ -20,7 +23,6 @@ type Scope struct {
 	config    *config
 	mu        sync.RWMutex
 	loggers   map[string]*logger // default logger key is empty str
-	closed    bool
 }
 
 func newScope(m *manager, name string, isDefault bool, opts ...Option) *Scope {
@@ -36,10 +38,12 @@ func newScope(m *manager, name string, isDefault bool, opts ...Option) *Scope {
 	return s
 }
 
+// Name returns the scope name.
 func (s *Scope) Name() string {
 	return s.name
 }
 
+// Logger returns an existing logger or creates one. Omit name for the default logger.
 func (s *Scope) Logger(name ...string) log.Printer {
 	n := defaultLoggerName
 	if len(name) > 0 {
@@ -53,12 +57,13 @@ func (s *Scope) isDefaultLogger(name string) bool {
 	return s.isDefault && name == defaultLoggerName
 }
 
+// Apply updates the scope configuration, including previously obtained loggers.
 func (s *Scope) Apply(opts ...Option) {
-	if len(opts) == 0 || s.closed {
-		return
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if len(opts) == 0 {
+		return
+	}
 	oldCfg := cloneConfig(s.config)
 	s.config = applyConfig(oldCfg, opts, s.manager.flagConfigs(s.name)...)
 	for k, v := range s.loggers {
@@ -71,35 +76,37 @@ func (s *Scope) remove(name ...string) error {
 	if len(name) == 0 {
 		return nil
 	}
+	return closeWriters(s.takeWriters(name))
+}
+
+// takeWriters removes loggers and returns their outputs. Empty name selects all.
+func (s *Scope) takeWriters(name []string) []io.Writer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var writers []io.Writer
+	if len(name) == 0 {
+		for _, l := range s.loggers {
+			writers = append(writers, l.Load().Writer())
+		}
+		clear(s.loggers)
+		return writers
+	}
 	for _, v := range name {
-		if v == defaultLoggerName {
+		if s.isDefault && v == defaultLoggerName {
 			continue
 		}
 		l, ok := s.loggers[v]
 		if !ok {
 			continue
 		}
-		closeWriter(l.logger().Writer())
+		writers = append(writers, l.Load().Writer())
 		delete(s.loggers, v)
 	}
-	return nil
+	return writers
 }
 
 func (s *Scope) close() error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil
-	}
-	var errs error
-	for _, l := range s.loggers {
-		closeWriter(l.logger().Writer())
-	}
-	s.closed = true
-	clear(s.loggers)
-	return errs
+	return closeWriters(s.takeWriters(nil))
 }
 
 func (s *Scope) fullName(name string) string {
@@ -182,7 +189,9 @@ func (l *logger) apply(name string, config *config, isDefault bool) {
 	l.Store(next)
 	// close old writer
 	if oldWriter != w {
-		closeWriter(oldWriter)
+		if err := closeWriter(oldWriter); err != nil && log.ErrorHandler != nil {
+			log.ErrorHandler(fmt.Errorf("logmgr: close previous output: %w", err))
+		}
 	}
 	if isDefault {
 		// The global logger does not pass through this printer's wrapper frame.

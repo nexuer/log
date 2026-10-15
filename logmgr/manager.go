@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/nexuer/log"
 )
@@ -17,7 +17,7 @@ type manager struct {
 	name        string
 	mu          sync.RWMutex
 	scopes      map[string]*Scope
-	closed      atomic.Bool
+	closed      bool // protected by mu
 }
 
 // newManager creates a manager with a default scope named after name.
@@ -73,14 +73,16 @@ func (m *manager) Register(name string, opts ...Option) (*Scope, error) {
 }
 
 func (m *manager) register(name string, isDefault bool, opts ...Option) (*Scope, error) {
-	if m.closed.Load() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
 		return nil, errors.New("logmgr: closed")
 	}
+
 	if name == "" {
 		return nil, errors.New("logmgr: scope name is empty")
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+
 	_, ok := m.scopes[name]
 	if ok {
 		return nil, fmt.Errorf("logmgr: duplicate scope %s", name)
@@ -113,62 +115,66 @@ func (m *manager) Scopes() []*Scope {
 	for _, scope := range m.scopes {
 		scopes = append(scopes, scope)
 	}
+	sort.Slice(scopes, func(i, j int) bool { return scopes[i].name < scopes[j].name })
 	return scopes
 }
 
-// Remove releases a scope or selected printers under the manager lock.
+// Remove releases a scope or selected loggers.
 func (m *manager) Remove(scope string, logger ...string) error {
-	if m.closed.Load() {
-		return nil
-	}
-	s, err := m.Get(scope)
-	if err != nil {
-		return err
-	}
-	if s.isDefault && len(logger) == 0 {
-		return errors.New("logmgr: cannot remove default scop")
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// delete scope
-	if len(logger) == 0 {
-		_ = s.close()
-		delete(m.scopes, scope)
+	s := m.scopes[scope]
+	if s == nil {
 		return nil
 	}
-
-	return s.remove(logger...)
+	if s.isDefault && len(logger) == 0 {
+		return errors.New("logmgr: cannot remove default scope")
+	}
+	writers := s.takeWriters(logger)
+	if len(logger) == 0 {
+		delete(m.scopes, scope)
+	}
+	return closeWriters(writers)
 }
 
 func (m *manager) Close() error {
-	if m.closed.Load() {
-		return errors.New("logmgr: already closed")
-	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var errs []error
-	for _, scope := range m.scopes {
-		if err := scope.close(); err != nil {
-			errs = append(errs, err)
-		}
+	if m.closed {
+		return nil
 	}
-	m.closed.Store(true)
+	m.closed = true
+	var writers []io.Writer
+	for _, scope := range m.scopes {
+		writers = append(writers, scope.takeWriters(nil)...)
+	}
 	clear(m.scopes)
-	return errors.Join(errs...)
+	return closeWriters(writers)
 }
 
-func closeWriter(w io.Writer) {
+func closeWriter(w io.Writer) error {
 	if w == os.Stdout || w == os.Stderr {
-		return
+		return nil
 	}
 	closer, ok := w.(io.Closer)
 	if !ok {
-		return
+		return nil
 	}
 	err := closer.Close()
-	if err != nil && !errors.Is(err, os.ErrClosed) && log.ErrorHandler != nil {
-		log.ErrorHandler(fmt.Errorf("logmgr: close previous output: %w", err))
+	if errors.Is(err, os.ErrClosed) {
+		return nil
 	}
+	return err
+}
+
+func closeWriters(writers []io.Writer) error {
+	var errs []error
+	for _, w := range writers {
+		if err := closeWriter(w); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func cloneConfig(src *config) *config {

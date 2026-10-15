@@ -19,10 +19,7 @@ func currentManager() *manager {
 	return m
 }
 
-// Init initializes process-wide log management and the default scope.
-// An empty name panics.
-// Calling Init again panics, including after Close.
-// Register and parse flags before calling Init.
+// Init creates the default scope. It panics for an empty name or repeated calls.
 func Init(name string, opts ...Option) {
 	initMu.Lock()
 	defer initMu.Unlock()
@@ -36,6 +33,8 @@ func Init(name string, opts ...Option) {
 	defaultManager.Store(m)
 }
 
+// Get returns a registered scope, or the default scope if name is omitted.
+// It panics if the scope does not exist.
 func Get(name ...string) *Scope {
 	scope, err := currentManager().Get(name...)
 	if err != nil {
@@ -44,6 +43,8 @@ func Get(name ...string) *Scope {
 	return scope
 }
 
+// Register creates a scope inheriting Init options.
+// It panics for empty or duplicate names, or after Close.
 func Register(name string, opts ...Option) *Scope {
 	scope, err := currentManager().Register(name, opts...)
 	if err != nil {
@@ -52,38 +53,30 @@ func Register(name string, opts ...Option) *Scope {
 	return scope
 }
 
+// Lookup returns a scope and whether it exists.
 func Lookup(name string) (*Scope, bool) {
 	return currentManager().Lookup(name)
 }
 
-// Scopes returns a snapshot of registered scopes sorted by name.
-// It panics before Init or after Close.
+// Scopes returns registered scopes sorted by name.
 func Scopes() []*Scope {
 	return currentManager().Scopes()
 }
 
-// Remove deletes and closes selected printers within a scope. Printer names
-// are relative to the scope; an empty name selects the scope's default printer.
-// With no printer names, it deletes and closes the entire scope.
-// Missing scopes or printers are ignored. The default scope and its default
-// printer cannot be removed. Held printers stop output after removal; a removed
-// LoggerScope can no longer be used to create printers or apply configuration.
-// Recreating the same name creates new resources, leaving old references inactive.
-// It reports output close errors and panics before Init. After Close it is a no-op.
+// Remove deletes named loggers and closes their outputs.
+// With no logger names, it removes the entire scope.
+// The default scope and its default logger are protected.
 func Remove(scope string, printers ...string) error {
 	return currentManager().Remove(scope, printers...)
 }
 
-// Close releases all managed outputs and stops output from held printers.
-// Further Close calls are no-ops. Scope access, printer creation, and configuration
-// changes panic after Close. It panics before Init.
+// Close closes all outputs and clears registrations. Further registration is forbidden.
+// Stop logging before calling Close. Repeated calls succeed.
 func Close() error {
 	return currentManager().Close()
 }
 
-// AddFlags registers log manager flags on fs.
-// Call AddFlags and parse the flag set before Init. Unscoped flags apply to all
-// scopes; named log-set values override them for the specified scope.
+// AddFlags registers logging flags on fs. Parse them before Init.
 func AddFlags(fs *flag.FlagSet) {
 	defaultFlags.AddFlags(fs)
 }

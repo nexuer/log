@@ -1,166 +1,131 @@
 # logmgr
 
-[English](./README.md) · [API 文档](https://pkg.go.dev/github.com/nexuer/log/logmgr) · [log](../README.zh-CN.md)
+[English](./README.md) · [API 文档](https://pkg.go.dev/github.com/nexuer/log/logmgr)
 
-`log` 的进程级日志管理包。通过 scope 管理配置，通过 printer 区分组件，支持命令行覆盖和文件轮转。
+[log](../README.zh-CN.md) 的全局日志管理包，支持命名 scope、命令行配置和文件轮转。
 
-## 快速开始
+## 背景
 
-```sh
-go get github.com/nexuer/log
-```
+一个服务通常包含 HTTP、数据库、任务等模块。它们需要统一管理日志，
+但输出要求可能不同：HTTP 写到终端，数据库写到文件，排查问题时只调整某个模块的日志级别。
 
-下面的服务将 http、grpc 日志输出到 stderr，db 日志写入文件：
+logmgr 用 **scope 划分配置组**。每个 scope 管理一组 logger，组内共享日志级别、
+格式、输出位置、公共字段和文件轮转设置；不同 scope 可以独立配置。
+logger 则用于标识组内的组件，例如 `server.http`、`server.grpc`。
+
+配置相同的组件放在同一个 scope，需要独立配置时再创建新 scope。
+例如 HTTP 和 gRPC 使用默认的 `server` scope，数据库使用单独的 `db` scope。
+文件输出时，每个 logger 按完整名称生成文件，共享的是输出目录和轮转配置。
+
+## 特性
+
+- **全局 API**：初始化一次，各模块按名称获取 scope 和 logger。
+- **分组配置**：新 scope 继承初始化配置，也可单独覆盖。
+- **动态调整**：通过 Apply 更新整个 scope，已缓存的 logger 自动生效。
+- **命令行覆盖**：统一设置全部 scope，或单独调整指定 scope。
+- **输出与轮转**：支持 Text、JSON，以及终端和自动轮转的文件输出。
+- **资源管理**：Remove 删除指定 logger 或 scope，Close 在退出时释放全部资源。
+
+## 使用
 
 ```go
 package main
 
 import (
-	"flag"
+    "flag"
 
-	"github.com/nexuer/log"
-	"github.com/nexuer/log/logmgr"
+    "github.com/nexuer/log"
+    "github.com/nexuer/log/logmgr"
 )
 
 func main() {
-	logmgr.AddFlags(flag.CommandLine)
-	flag.Parse()
+    logmgr.AddFlags(flag.CommandLine)
+    flag.Parse()
 
-	logmgr.Init("server",
-		logmgr.WithOutput(logmgr.StderrOutput),
-		logmgr.WithFields(log.DefaultFields...),
-	)
-	defer logmgr.Close()
+    logmgr.Init("server", logmgr.WithFields(log.DefaultFields...))
+    defer logmgr.Close()
 
-	db := logmgr.AddScope("db",
-		logmgr.WithOutput(logmgr.FileOutput),
-		logmgr.WithFileDir("log/db"),
-		logmgr.WithLevel(log.LevelWarn),
-	)
+    http := logmgr.Get().Logger("http")
+    http.Info("listening on :8080")
 
-	logmgr.Printer("http").Info("listening on :8080")
-	logmgr.Printer("grpc").Info("listening on :9090")
-	db.Printer("mysql").Warn("slow query")
+    db := logmgr.Register("db",
+        logmgr.WithOutput(logmgr.FileOutput),
+        logmgr.WithFileDir("log/db"),
+    )
+    db.Logger("mysql").Warn("slow query")
+
+    db.Apply(logmgr.WithLevel(log.LevelError))
 }
 ```
 
-`Init` 只调用一次且不返回值。其他包可以直接调用 `logmgr.Printer`、`logmgr.Scope`，
-或接收 `log.Printer`。管理操作均为包级函数，scope 类型为 `LoggerScope`。
+先调用一次 `Init`，再使用其他 API。Scope 名称不能为空或重复。
 
-所有 scope 都必须有非空名称，包括 `Init` 创建的默认 scope。
-例如 `Init("server")` 的默认 printer 写入 `server.log`。
+## Scope 与 Logger
 
-## Scope 与 Printer
+同一 scope 下的 logger 共享配置，新 scope 继承 `Init` 的 options。
 
-同一 scope 下的 printer 共享级别、格式、输出和轮转配置。
-新 scope 继承 `Init` 的 options，再应用自己的 options。
+| API | 用途 |
+|---|---|
+| `Get()` / `Get(name)` | 获取默认或指定 scope，不存在时 panic |
+| `Register(name, opts...)` | 注册 scope |
+| `Lookup(name)` | 获取 scope 及是否存在 |
+| `Scopes()` | 返回按名称排序的 scope 列表 |
+| `scope.Logger(name...)` | 获取或创建 logger |
+| `scope.Apply(opts...)` | 更新配置，已缓存的 logger 也会生效 |
+
+Logger 名称相对于 scope：
 
 ```go
-logmgr.Printer()                    // server
-logmgr.Printer("http")              // server.http
-logmgr.Scope("db").Printer()        // db
-logmgr.Scope("db").Printer("mysql") // db.mysql
+logmgr.Get().Logger()              // server
+logmgr.Get().Logger("http")        // server.http
+logmgr.Get("db").Logger("mysql")   // db.mysql
 ```
 
-Scope 需要先用 `AddScope(name, opts...)` 注册；空名称或重复注册会 panic。
-`Scope(name)` 只获取已有 scope，不创建、不修改配置；不存在时 panic。
-已有 scope 的配置通过 `scope.Apply(opts...)` 修改。
-Printer 按名称创建并复用。`logmgr.Scopes()` 返回按名称排序的 scope 列表。
+文件输出路径为 `<file-dir>/<完整 logger 名称>.log`。
+例如上面的 mysql logger 写入 `log/db/db.mysql.log`。
+默认 scope 的配置也应用于 `log.Default()`。
 
-文件路径为 `<file-dir>/<完整 logger 名称>.log`，不同完整名称的 printer 分别写文件。
-上面的 db scope 对应：
-
-| Printer | 文件 |
-|---|---|
-| `db.Printer()` | `log/db/db.log` |
-| `db.Printer("mysql")` | `log/db/db.mysql.log` |
-
-完整 logger 名称和目录相同时，允许不同 scope 的 printer 写入同一个文件。
-例如 `db` scope 的 `mysql` printer 与 `db.mysql` scope 的默认 printer，
-在同一目录下都写入 `db.mysql.log`。
-
-不确定 scope 是否存在时，使用 `LookupScope(name)`，返回 `(*LoggerScope, bool)`，
-不创建、不修改配置。与 `Scope` 一样，未初始化或关闭后调用会 panic。
-查询成功不会阻止其他 goroutine 随后删除 scope。
+`WithFields` / `AppendFields` 接收 `log.Field`，
+`WithKeyValues` / `AppendKeyValues` 接收键值对。
+完整选项见 [API 文档](https://pkg.go.dev/github.com/nexuer/log/logmgr)。
 
 ## 命令行配置
 
-在 `Init` 前注册并解析 flags。通用参数影响所有 scope，指定 scope 的 `log-set` 优先。
+在 `Init` 前注册并解析 flags，只有显式传入的参数才会覆盖代码配置。
+
+| 参数 | 默认值 |
+|---|---|
+| `--log-level` | `info` |
+| `--log-format` | `text` |
+| `--log-output` | `stderr` |
+| `--log-file-dir` | `log` |
+| `--log-file-size` | `512` MB；0 使用默认值 |
+| `--log-file-backups` | `0`，不限制 |
+| `--log-file-compress` | `false` |
+
+使用 `--log-set` 设置全部或指定 scope：
 
 ```sh
-app --log-format=json
-app --log-format=json --log-set=db.format=text
-app --log-level=info --log-set=db.level=warn
-```
-
-第一条让所有 scope 使用 JSON，http、grpc 仍写 stderr，db 仍写文件。
-第二条让 db 单独使用 Text。
-
-| 参数 | 默认值 | 可选值 / 单位 |
-|---|---|---|
-| `--log-level` | `info` | debug、info、warn、error、fatal |
-| `--log-format` | `text` | text、json |
-| `--log-output` | `stderr` | stderr、stdout、file |
-| `--log-file-dir` | `log` | 文件目录 |
-| `--log-file-size` | `512` | MB；0 使用默认值 |
-| `--log-file-backups` | `0` | 备份数；0 不限制 |
-| `--log-file-compress` | `false` | gzip 压缩 |
-
-默认值在代码未配置该项时使用。没有显式传入的 CLI 参数不会覆盖代码配置。
-`--log-set` 支持上述字段去掉 `log-` 前缀后的名称：
-
-```sh
---log-set=format=json
---log-set=db.output=file
---log-set=db.file-dir=log/db
+app --log-format=json --log-set=db.level=warn
+app --log-set=output=file --log-set=db.file-dir=log/db
 ```
 
 配置优先级从低到高：
 
 ```text
-默认值 → Init options → Scope options → 通用 flags → log-set=key=value → log-set=scope.key=value
+默认值 → Init options → Scope options / Apply → 通用 flags → log-set=key=value → log-set=scope.key=value
 ```
-
-## 运行时调整
-
-```go
-logmgr.DefaultScope().Apply(logmgr.WithLevel(log.LevelWarn)) // 默认 scope
-logmgr.Scope("db").Apply(logmgr.WithLevel(log.LevelError)) // db scope
-```
-
-已获取的 printer 会使用新配置，`Apply` 可以与日志写入并发调用。
-显式配置的 CLI 字段仍优先于 `Apply`。
-
-字段和 Replacer 也可以通过 options 配置：
-
-```go
-logmgr.WithFields(log.String("service", "api"))
-logmgr.AppendFields(log.String("component", "db"))
-logmgr.WithKeyValues("service", "api")
-logmgr.WithReplacer(replacer)
-```
-
-完整 options 见 [API 文档](https://pkg.go.dev/github.com/nexuer/log/logmgr)。
-退出时调用 `logmgr.Close()` 关闭托管输出。
 
 ## 释放资源
 
 ```go
-logmgr.Remove("db", "mysql", "redis") // 删除指定 printer，名称相对于 scope
-logmgr.Remove("db", "")              // 删除 db scope 的默认 printer
+logmgr.Remove("db", "mysql", "redis") // 删除指定 logger
+logmgr.Remove("db", "")              // 删除 scope 的默认 logger
 logmgr.Remove("db")                  // 删除整个 scope
 ```
 
-`Remove` 删除注册项并关闭输出，返回关闭错误；目标不存在时直接成功。
-默认 scope 及其默认 printer 不允许删除，默认 scope 下的其他 printer 可以删除。
-已持有的 printer 在删除后停止输出；整个 scope 被删除后，旧 scope 的 `Printer`
-和带 options 的 `Apply` 调用会 panic。重新创建同名对象不会恢复旧引用。
+Remove 关闭输出并删除注册项，目标不存在时忽略。
+默认 scope 及其默认 logger 不允许删除。删除后不再使用旧 scope 或 logger。
 
-`logmgr.Close()` 关闭全部托管输出，重复调用直接成功。关闭后不能再获取 scope、
-创建 printer、修改配置或重新 `Init`；已持有的 printer 停止输出。
-
-printer 调用通过原子读取获取配置快照，不使用 printer 层的锁。
-`Apply`、`Remove`、`Close` 不等待使用旧快照的调用结束。旧调用仍可能尝试写入
-已经关闭的输出；写入错误交给 `log.ErrorHandler` 处理（`Printer.Write` 返回错误）。
-关闭后拒绝写入还是重新打开输出，由底层 writer 决定。退出时先停止日志生产
-goroutine，再调用 `Close`。
+程序退出时，先停止日志输出，再调用 `Close`。
+Close 关闭全部输出并清空注册表，重复调用直接成功；关闭后不能再注册或重新初始化。
