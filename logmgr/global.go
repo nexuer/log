@@ -19,6 +19,11 @@ func currentManager() *manager {
 	return m
 }
 
+// Initialized reports whether Init has been called successfully.
+func Initialized() bool {
+	return defaultManager.Load() != nil
+}
+
 // Init creates the default scope. It panics for an empty name or repeated calls.
 func Init(name string, opts ...Option) {
 	initMu.Lock()
