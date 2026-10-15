@@ -123,13 +123,15 @@ func WithLevel(v log.Level) Option {
 }
 
 // WithFields sets fields that are included in every record.
+// The caller must not modify the field slice after passing it to WithFields.
 func WithFields(v ...log.Field) Option {
 	return Option{apply: func(c *config) {
-		c.Fields = v
+		c.Fields = append([]log.Field(nil), v...)
 	}}
 }
 
 // AppendFields appends fields that are included in every record.
+// The caller must not modify the field slice while the option may be reused.
 func AppendFields(v ...log.Field) Option {
 	return Option{apply: func(c *config) {
 		c.Fields = append(c.Fields, v...)
@@ -138,16 +140,12 @@ func AppendFields(v ...log.Field) Option {
 
 // WithKeyValues sets fields from key-value pairs that are included in every record.
 func WithKeyValues(v ...any) Option {
-	return Option{apply: func(c *config) {
-		c.Fields = log.Fields(v...)
-	}}
+	return WithFields(log.Fields(v...)...)
 }
 
 // AppendKeyValues appends fields from key-value pairs that are included in every record.
 func AppendKeyValues(v ...any) Option {
-	return Option{apply: func(c *config) {
-		c.Fields = append(c.Fields, log.Fields(v...)...)
-	}}
+	return AppendFields(log.Fields(v...)...)
 }
 
 // WithOutput sets the output target.
@@ -215,6 +213,9 @@ func applyConfig(next *config, opts []Option, flagsConfigs ...*config) *config {
 
 	for _, flagsConfig := range flagsConfigs {
 		mergeConfig(next, flagsConfig)
+	}
+	if *next.File.Size == 0 {
+		next.File.Size = &defaultFileSize
 	}
 	return next
 }

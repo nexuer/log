@@ -27,25 +27,30 @@ func main() {
 	logmgr.AddFlags(flag.CommandLine)
 	flag.Parse()
 
-	m := logmgr.Init("server",
+	logmgr.Init("server",
 		logmgr.WithOutput(logmgr.StderrOutput),
 		logmgr.WithFields(log.DefaultFields...),
 	)
-	defer m.Close()
+	defer logmgr.Close()
 
-	db := m.MustAddScope("db",
+	db := logmgr.AddScope("db",
 		logmgr.WithOutput(logmgr.FileOutput),
 		logmgr.WithFileDir("log/db"),
 		logmgr.WithLevel(log.LevelWarn),
 	)
 
-	m.Printer("http").Info("listening on :8080")
-	m.Printer("grpc").Info("listening on :9090")
+	logmgr.Printer("http").Info("listening on :8080")
+	logmgr.Printer("grpc").Info("listening on :9090")
 	db.Printer("mysql").Warn("slow query")
 }
 ```
 
-Call `Init` once. Other packages can use `logmgr.M()` or receive a `log.Printer`.
+Call `Init` once. Other packages can use `logmgr.Printer` and `logmgr.Scope`,
+or receive a `log.Printer`. All manager operations are package-level functions;
+`Init` has no return value. The scope type is `LoggerScope`.
+
+All scopes require a nonempty name, including the default scope created by
+`Init`. For example, the default printer from `Init("server")` writes to `server.log`.
 
 ## Scopes and printers
 
@@ -53,23 +58,34 @@ Printers in a scope share level, format, output, and rotation settings.
 New scopes inherit `Init` options, then apply their own options.
 
 ```go
-m.Printer()                    // server
-m.Printer("http")              // server.http
-m.Scope("db").Printer()        // db
-m.Scope("db").Printer("mysql") // db.mysql
+logmgr.Printer()                    // server
+logmgr.Printer("http")              // server.http
+logmgr.Scope("db").Printer()        // db
+logmgr.Scope("db").Printer("mysql") // db.mysql
 ```
 
-Register scopes with `AddScope`; duplicate names return an error.
-`MustAddScope` panics on error. Printers are created and reused by name.
-`Scopes()` lists registered scopes sorted by name.
+Register scopes with `AddScope(name, opts...)`; empty or duplicate names panic.
+`Scope(name)` only retrieves a registered scope;
+it does not create scopes or change configuration, and panics if missing.
+Use `AddScope(name, opts...)` to configure a new scope and `scope.Apply(opts...)`
+to update an existing one. Printers are created and reused by name.
+`logmgr.Scopes()` lists registered scopes sorted by name.
 
-Each printer writes to its own `<file-dir>/<full logger name>.log` file.
+Printers write to `<file-dir>/<full logger name>.log`.
 For the db scope above:
 
 | Printer | File |
 |---|---|
 | `db.Printer()` | `log/db/db.log` |
 | `db.Printer("mysql")` | `log/db/db.mysql.log` |
+
+Printers in different scopes may write to the same file when their full logger
+names and directories match. For example, the `mysql` printer in scope `db` and
+the default printer in scope `db.mysql` both write to `db.mysql.log` in the same directory.
+
+Use `LookupScope(name)` when a scope may be absent; it returns `(*LoggerScope, bool)`
+and does not create or change configuration. Like `Scope`, it panics before
+`Init` or after `Close`. Lookup does not prevent concurrent removal.
 
 ## CLI configuration
 
@@ -114,8 +130,8 @@ Defaults → Init options → Scope options → Global flags → log-set=key=val
 ## Runtime configuration
 
 ```go
-m.Apply(logmgr.WithLevel(log.LevelWarn))              // Default scope
-m.Scope("db").Apply(logmgr.WithLevel(log.LevelError)) // db scope
+logmgr.DefaultScope().Apply(logmgr.WithLevel(log.LevelWarn)) // Default scope
+logmgr.Scope("db").Apply(logmgr.WithLevel(log.LevelError)) // db scope
 ```
 
 Existing printers use the updated configuration. `Apply` can run concurrently
@@ -131,4 +147,30 @@ logmgr.WithReplacer(replacer)
 ```
 
 See the [API reference](https://pkg.go.dev/github.com/nexuer/log/logmgr) for all options.
-Call `m.Close()` on shutdown to close managed outputs.
+Call `logmgr.Close()` on shutdown to close managed outputs.
+
+## Releasing resources
+
+```go
+logmgr.Remove("db", "mysql", "redis") // Remove printers by scope-relative names.
+logmgr.Remove("db", "")              // Remove db's default printer.
+logmgr.Remove("db")                  // Remove the entire scope.
+```
+
+`Remove` unregisters resources, closes their outputs, and returns close errors.
+Missing scopes or printers are ignored. The default scope and its default printer
+cannot be removed; other printers within the default scope can be removed.
+Held printers stop output after removal. After an entire scope is removed, its
+old `Printer` and nonempty `Apply` calls panic. Recreating the same name does not
+reactivate old references.
+
+`logmgr.Close()` closes all managed outputs; repeated calls succeed. After closing,
+scope access, printer creation, configuration changes, and another `Init` panic.
+Held printers stop output.
+
+Printer calls atomically load a configuration snapshot without a printer lock.
+`Apply`, `Remove`, and `Close` do not wait for calls using an older snapshot.
+Those calls may still attempt to write to the previous output after it is closed;
+write failures are handled by `log.ErrorHandler` (or returned by `Printer.Write`).
+Whether a closed writer rejects writes or reopens its output depends on that
+writer. Stop logging goroutines before calling `Close` on shutdown.

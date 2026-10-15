@@ -56,17 +56,6 @@ func newFlags() *flags {
 	}
 }
 
-func parseBool(s string) (bool, error) {
-	switch strings.ToLower(s) {
-	case "1", "t", "true", "y", "yes", "on":
-		return true, nil
-	case "0", "f", "false", "n", "no", "off":
-		return false, nil
-	default:
-		return false, fmt.Errorf("invalid bool %q", s)
-	}
-}
-
 // AddFlags registers global log flags and dynamic log-set flags.
 func (f *flags) AddFlags(fs *flag.FlagSet) {
 	if f.config == nil {
@@ -142,9 +131,6 @@ func (f *flags) AddFlags(fs *flag.FlagSet) {
 	fs.Var(
 		boolFlagValue{
 			set: func(s string) error {
-				if _, err := parseBool(s); err != nil {
-					return err
-				}
 				return parseConfigField(f.config, "file-compress", s)
 			},
 		},
@@ -180,10 +166,10 @@ func splitSetFlag(raw string) (scope, key, value string, err error) {
 	if !ok {
 		return "", "", "", fmt.Errorf("missing '='")
 	}
-	scope, key, ok = strings.Cut(left, ".")
-	if !ok {
-		key = scope
-		scope = ""
+	if i := strings.LastIndexByte(left, '.'); i >= 0 {
+		scope, key = left[:i], left[i+1:]
+	} else {
+		key = left
 	}
 	if key == "" {
 		return "", "", "", fmt.Errorf("want key=value or scope.key=value")

@@ -12,7 +12,7 @@ var (
 	// output. default an error is printed on the stderr. This handler must
 	// be thread safe and non-blocking.
 	ErrorHandler func(err error) = func(err error) {
-		_, _ = fmt.Fprintf(os.Stderr, "log: write failed, %v\n", err)
+		_, _ = fmt.Fprintf(os.Stderr, "log error: %v\n", err)
 	}
 )
 
