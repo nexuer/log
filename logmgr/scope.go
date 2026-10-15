@@ -1,9 +1,9 @@
 package logmgr
 
 import (
-	"errors"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/nexuer/log"
 )
@@ -23,12 +23,13 @@ type Scope struct {
 	closed    bool
 }
 
-func newScope(m *manager, name string, opts ...Option) *Scope {
+func newScope(m *manager, name string, isDefault bool, opts ...Option) *Scope {
 	s := &Scope{
-		name:    name,
-		manager: m,
-		config:  applyConfig(nil, m.scopeOpts(opts...), m.flagConfigs(name)...),
-		loggers: make(map[string]*logger),
+		name:      name,
+		manager:   m,
+		isDefault: isDefault,
+		config:    applyConfig(nil, m.scopeOpts(opts...), m.flagConfigs(name)...),
+		loggers:   make(map[string]*logger),
 	}
 	// add default logger
 	s.addLogger(defaultLoggerName)
@@ -45,7 +46,7 @@ func (s *Scope) Logger(name ...string) log.Printer {
 		n = name[0]
 	}
 	l := s.logger(n, true)
-	return l.printer
+	return l.logger()
 }
 
 func (s *Scope) isDefaultLogger(name string) bool {
@@ -59,10 +60,11 @@ func (s *Scope) Apply(opts ...Option) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	oldCfg := cloneConfig(s.config)
-	newCfg := applyConfig(oldCfg, opts, s.manager.flagConfigs(s.name)...)
+	s.config = applyConfig(oldCfg, opts, s.manager.flagConfigs(s.name)...)
 	for k, v := range s.loggers {
-		v.apply(s.fullName(k), newCfg, s.isDefaultLogger(k))
+		v.apply(s.fullName(k), s.config, s.isDefaultLogger(k))
 	}
+
 }
 
 func (s *Scope) remove(name ...string) error {
@@ -76,7 +78,7 @@ func (s *Scope) remove(name ...string) error {
 		if !ok {
 			continue
 		}
-		_ = l.logger.Close()
+		closeWriter(l.logger().Writer())
 		delete(s.loggers, v)
 	}
 	return nil
@@ -90,9 +92,7 @@ func (s *Scope) close() error {
 	}
 	var errs error
 	for _, l := range s.loggers {
-		if err := l.logger.Close(); err != nil {
-			errs = errors.Join(errs, err)
-		}
+		closeWriter(l.logger().Writer())
 	}
 	s.closed = true
 	clear(s.loggers)
@@ -116,7 +116,7 @@ func (s *Scope) logger(name string, create bool) *logger {
 	s.mu.RUnlock()
 	// create new logger
 	if create {
-		s.addLogger(name)
+		return s.addLogger(name)
 	}
 	return nil
 }
@@ -126,9 +126,8 @@ func (s *Scope) addLogger(name string) *logger {
 	defer s.mu.Unlock()
 	l, ok := s.loggers[name]
 	if !ok {
-		l = &logger{
-			logger: log.New(os.Stderr),
-		}
+		l = &logger{}
+		l.l.Store(log.New(os.Stderr))
 	}
 	l.apply(s.fullName(name), s.config, s.isDefaultLogger(name))
 	s.loggers[name] = l
@@ -136,17 +135,20 @@ func (s *Scope) addLogger(name string) *logger {
 }
 
 type logger struct {
-	logger  *log.Logger
-	printer log.Printer
+	l atomic.Pointer[log.Logger]
+}
+
+func (l *logger) logger() *log.Logger {
+	return l.l.Load()
 }
 
 func (l *logger) apply(name string, config *config, isDefault bool) {
 	h := config.handler(name)
-	ctx := l.logger.Context()
+	ctx := l.logger().Context()
 	if len(config.Fields) > 0 {
 		h = h.WithFields(ctx, config.Fields...)
 	}
-	oldWriter := l.logger.Writer()
+	oldWriter := l.logger().Writer()
 	w, filepath := config.writer(name, oldWriter)
 	if filepath != "" {
 		// use new handler
@@ -159,17 +161,12 @@ func (l *logger) apply(name string, config *config, isDefault bool) {
 		SetLevel(*config.Level).
 		WithContext(ctx)
 
-	l2 := &logger{
-		logger:  next,
-		printer: log.NewPrinter(next),
-	}
-
-	*l = *l2
+	l.l.Store(next)
 	// close old writer
 	if oldWriter != w {
 		closeWriter(oldWriter)
 	}
 	if isDefault {
-		log.SetDefault(l.logger)
+		log.SetDefault(l.logger())
 	}
 }

@@ -25,13 +25,13 @@ func newManager(name string, opts ...Option) (*manager, error) {
 	m := &manager{
 		name:        name,
 		initOptions: append([]Option(nil), opts...),
+		scopes:      make(map[string]*Scope),
 	}
 	// add default scope
-	scope, err := m.Register(name)
+	_, err := m.register(name, true)
 	if err != nil {
 		return nil, err
 	}
-	scope.isDefault = true
 	return m, nil
 }
 
@@ -69,6 +69,10 @@ func (m *manager) Get(name ...string) (*Scope, error) {
 }
 
 func (m *manager) Register(name string, opts ...Option) (*Scope, error) {
+	return m.register(name, false, opts...)
+}
+
+func (m *manager) register(name string, isDefault bool, opts ...Option) (*Scope, error) {
 	if m.closed.Load() {
 		return nil, errors.New("logmgr: closed")
 	}
@@ -81,7 +85,8 @@ func (m *manager) Register(name string, opts ...Option) (*Scope, error) {
 	if ok {
 		return nil, fmt.Errorf("logmgr: duplicate scope %s", name)
 	}
-	scope := newScope(m, name, opts...)
+	scope := newScope(m, name, isDefault, opts...)
+	m.scopes[name] = scope
 	return scope, nil
 }
 
