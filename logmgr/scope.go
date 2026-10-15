@@ -46,7 +46,7 @@ func (s *Scope) Logger(name ...string) log.Printer {
 		n = name[0]
 	}
 	l := s.logger(n, true)
-	return l.logger()
+	return l
 }
 
 func (s *Scope) isDefaultLogger(name string) bool {
@@ -74,6 +74,9 @@ func (s *Scope) remove(name ...string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, v := range name {
+		if v == defaultLoggerName {
+			continue
+		}
 		l, ok := s.loggers[v]
 		if !ok {
 			continue
@@ -127,7 +130,8 @@ func (s *Scope) addLogger(name string) *logger {
 	l, ok := s.loggers[name]
 	if !ok {
 		l = &logger{}
-		l.l.Store(log.New(os.Stderr))
+		initial := log.New(os.Stderr)
+		l.l.Store(initial.WithContext(log.AddCallerDepth(initial.Context(), 1)))
 	}
 	l.apply(s.fullName(name), s.config, s.isDefaultLogger(name))
 	s.loggers[name] = l
@@ -138,17 +142,30 @@ type logger struct {
 	l atomic.Pointer[log.Logger]
 }
 
+var _ log.Printer = (*logger)(nil)
+
+func (l *logger) Debug(args ...any)                 { l.l.Load().Debug(args...) }
+func (l *logger) Debugf(format string, args ...any) { l.l.Load().Debugf(format, args...) }
+func (l *logger) Info(args ...any)                  { l.l.Load().Info(args...) }
+func (l *logger) Infof(format string, args ...any)  { l.l.Load().Infof(format, args...) }
+func (l *logger) Warn(args ...any)                  { l.l.Load().Warn(args...) }
+func (l *logger) Warnf(format string, args ...any)  { l.l.Load().Warnf(format, args...) }
+func (l *logger) Error(args ...any)                 { l.l.Load().Error(args...) }
+func (l *logger) Errorf(format string, args ...any) { l.l.Load().Errorf(format, args...) }
+func (l *logger) Write(p []byte) (int, error)       { return l.l.Load().Write(p) }
+
 func (l *logger) logger() *log.Logger {
 	return l.l.Load()
 }
 
 func (l *logger) apply(name string, config *config, isDefault bool) {
 	h := config.handler(name)
-	ctx := l.logger().Context()
+	old := l.l.Load()
+	ctx := old.Context()
 	if len(config.Fields) > 0 {
 		h = h.WithFields(ctx, config.Fields...)
 	}
-	oldWriter := l.logger().Writer()
+	oldWriter := old.Writer()
 	w, filepath := config.writer(name, oldWriter)
 	if filepath != "" {
 		// use new handler
@@ -167,6 +184,7 @@ func (l *logger) apply(name string, config *config, isDefault bool) {
 		closeWriter(oldWriter)
 	}
 	if isDefault {
-		log.SetDefault(l.logger())
+		// The global logger does not pass through this printer's wrapper frame.
+		log.SetDefault(next.WithContext(log.AddCallerDepth(ctx, -1)))
 	}
 }
