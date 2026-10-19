@@ -1,35 +1,19 @@
 # logmgr
 
-[简体中文](./README.zh-CN.md) · [API reference](https://pkg.go.dev/github.com/nexuer/log/logmgr)
+[简体中文](./README.zh-CN.md) · [API reference](https://pkg.go.dev/github.com/nexuer/log/logmgr) · [log](../README.md)
 
-Process-wide logging configuration for [log](../README.md), with named scopes,
-command-line options, and rotating files.
+Global logging management for log, with shared configuration and outputs for multiple components.
 
-## Background
-
-A service often has HTTP, database, and worker components. They need centrally
-managed logging, but may have different requirements: HTTP logs go to the terminal,
-database logs go to files, and troubleshooting changes the level of just one group.
-
-logmgr uses a **scope as a configuration group**. Each scope manages loggers that
-share a level, format, output target, common fields, and rotation settings.
-Different scopes can be configured independently. Logger names identify components
-within a group, such as `server.http` and `server.grpc`.
-
-Keep components with the same configuration in one scope; create another scope
-when independent configuration is needed. For example, HTTP and gRPC can use the
-default `server` scope, while the database uses a separate `db` scope.
-With file output, each logger uses its full name as the filename; the directory
-and rotation settings are shared.
+Use scopes when modules need independent configuration or logs need coordinated
+runtime updates, without managing configuration and output resources in every module.
 
 ## Features
 
-- **Global API**: initialize once and retrieve scopes and loggers by name.
-- **Grouped configuration**: new scopes inherit initialization options and can override them.
-- **Runtime updates**: Apply updates a whole scope, including cached loggers.
+- **Scope groups and inheritance**: loggers share configuration within a scope; new scopes inherit Init options before applying their own overrides.
+- **Global access**: initialize once and retrieve scopes and loggers by name, reducing configuration passed between modules.
+- **Runtime configuration**: Apply updates the entire scope, including cached Printers, without requiring callers to retrieve them again.
 - **CLI overrides**: configure all scopes or target a specific scope.
-- **Output and rotation**: Text and JSON formats, terminal output, and rotating files.
-- **Resource management**: Remove selected loggers or scopes; Close releases all resources on shutdown.
+- **Files and resources**: rotating files, removal by logger or scope, and central shutdown cleanup.
 
 ## Usage
 
@@ -51,53 +35,59 @@ func main() {
     defer logmgr.Close()
 
     http := logmgr.Logger("http")
-    http.Info("listening on :8080")
+    http.Info("server started")
 
     db := logmgr.Register("db",
         logmgr.WithOutput(logmgr.FileOutput),
         logmgr.WithFileDir("log/db"),
     )
-    db.Logger("mysql").Warn("slow query")
+    mysql := db.Logger("mysql")
+    mysql.Warn("slow query")
 
     db.Apply(logmgr.WithLevel(log.LevelError))
 }
 ```
 
-Call `Init` once before using other APIs. Scope names must be nonempty and unique.
+### Scopes and Printers
 
-## Scopes and loggers
+A scope is a configuration group for levels, formats, outputs, common fields, and
+rotation settings. Keep components with the same configuration in one scope;
+register another scope when separate configuration is needed.
+New scopes inherit Init options before applying their own options.
 
-A scope shares configuration among its loggers. New scopes inherit `Init` options.
+Logger names identify components within a group:
+
+```go
+logmgr.Logger()                  // server
+logmgr.Logger("http")            // server.http
+logmgr.Get("db").Logger("mysql") // db.mysql
+```
+
+`Logger` returns a `log.Printer` for message output, without methods to add or
+override configured fields, change configuration, or close resources.
+
+Files use `<file-dir>/<full logger name>.log`. The mysql logger above writes to
+`log/db/db.mysql.log`. The default scope also configures `log.Default()`.
+
+### Common APIs
 
 | API | Purpose |
 |---|---|
-| `Get()` / `Get(name)` | Get the default or a named scope; panic if missing |
-| `Logger(name...)` | Get or create a logger in the default scope |
-| `Register(name, opts...)` | Create a scope |
-| `Lookup(name)` | Get a scope and whether it exists |
-| `Scopes()` | List scopes sorted by name |
-| `scope.Logger(name...)` | Get or create a logger |
-| `scope.Apply(opts...)` | Update configuration, including cached loggers |
+| `Init(name, opts...)` | Initialize once and create the default scope |
+| `Initialized()` | Whether initialization succeeded; stays true after Close |
+| `Logger(name...)` | Get or create a Printer in the default scope |
+| `Register(name, opts...)` | Register a scope with a nonempty, unique name |
+| `Get(name...)` | Get a scope, default if omitted; panic if missing |
+| `Lookup(name)` / `Scopes()` | Look up a scope / list scopes sorted by name |
+| `scope.Logger(name...)` | Get or create a Printer; omit the name for the scope's default logger |
+| `scope.Apply(opts...)` | Update configuration, including previously obtained Printers |
 
-Logger names are relative to the scope:
+Use `WithFields` / `AppendFields` for common fields and
+`WithKeyValues` / `AppendKeyValues` for key-value pairs. See the API reference for all options.
 
-```go
-logmgr.Logger()                    // server
-logmgr.Logger("http")              // server.http
-logmgr.Get("db").Logger("mysql")   // db.mysql
-```
+### Command-line configuration
 
-File output uses `<file-dir>/<full logger name>.log`.
-For example, the mysql logger above writes to `log/db/db.mysql.log`.
-The default scope also configures `log.Default()`.
-
-Use `WithFields` / `AppendFields` for `log.Field` values and
-`WithKeyValues` / `AppendKeyValues` for key-value pairs.
-See the [API reference](https://pkg.go.dev/github.com/nexuer/log/logmgr) for all options.
-
-## Command-line configuration
-
-Register and parse flags before `Init`. Only explicitly supplied flags override code options.
+Call AddFlags and parse arguments before Init. Supported flags:
 
 | Flag | Default |
 |---|---|
@@ -109,31 +99,24 @@ Register and parse flags before `Init`. Only explicitly supplied flags override 
 | `--log-file-backups` | `0` (unlimited) |
 | `--log-file-compress` | `false` |
 
-Use `--log-set` for global or scope-specific overrides:
-
 ```sh
 app --log-format=json --log-set=db.level=warn
 app --log-set=output=file --log-set=db.file-dir=log/db
 ```
 
-Precedence, lowest to highest:
+Only explicitly supplied flags override code configuration. Scope-specific
+configuration takes precedence over global configuration; flags also take precedence over Apply.
 
-```text
-Defaults → Init options → Scope options / Apply → Global flags → log-set=key=value → log-set=scope.key=value
-```
-
-## Releasing resources
+### Releasing resources
 
 ```go
-logmgr.Remove("db", "mysql", "redis") // Remove selected loggers.
-logmgr.Remove("db", "")              // Remove the scope's default logger.
-logmgr.Remove("db")                  // Remove the entire scope.
+logmgr.Remove("db", "mysql") // Remove a logger and close its output.
+logmgr.Remove("db", "")      // Remove db's default logger.
+logmgr.Remove("db")          // Remove a scope and close its outputs.
 ```
 
-Remove closes outputs and deletes registrations. Missing targets are ignored.
-The default scope and its default logger are protected.
-Do not continue using removed scopes or loggers.
+Missing targets are ignored. The default scope and its default logger are protected.
+Stop using removed objects.
 
-Stop logging before calling `Close` on shutdown. It closes all outputs and clears
-registrations. Repeated calls succeed; registration and reinitialization are no
-longer allowed.
+Stop logging before calling Close on shutdown. It closes all outputs and clears
+registrations. Repeated calls succeed; further registration and reinitialization are forbidden.

@@ -1,8 +1,17 @@
 # log
 
-[English](./README.md) · [API 文档](https://pkg.go.dev/github.com/nexuer/log) · [日志管理](./logmgr/README.zh-CN.md)
+[English](./README.md) · [API 文档](https://pkg.go.dev/github.com/nexuer/log) · [logmgr](./logmgr/README.zh-CN.md)
 
-Go 结构化日志库，支持 Text、JSON、动态字段和 `log/slog` 接入。
+Go 日志库，支持普通日志、格式化日志和结构化日志，可输出 Text 或 JSON。
+支持公共字段、字段分组，以及在记录日志时从 Context 获取动态字段。
+
+## 特性
+
+- **日志方法清晰**：`Info` 记录普通日志，`Infof` 格式化日志内容，`InfoS` 为本条日志附加字段。
+- **动态获取字段**：记录日志时从 Context 读取 trace ID 等信息，无需每次调用都手动传入。时间戳和调用位置也可以按需添加。
+- **字段配置灵活**：支持键值对、带类型的字段、字段分组和可复用的公共字段，还可通过 Replacer 转换、脱敏或过滤字段。
+- **支持 slog**：提供 `log/slog` Handler，可以继续使用标准库的日志方法，配合本库配置格式和字段。
+- **Printer 接口**：向只需打印日志的代码提供普通和格式化日志方法，沿用 Logger 的字段与输出配置，不开放添加字段、修改配置或关闭资源的方法。
 
 ## 安装
 
@@ -10,92 +19,59 @@ Go 结构化日志库，支持 Text、JSON、动态字段和 `log/slog` 接入�
 go get github.com/nexuer/log
 ```
 
-## 快速开始
+## 使用
+
+### 记录日志
 
 ```go
-package main
+logger := log.New(os.Stderr)
 
-import (
-	"os"
-
-	"github.com/nexuer/log"
-)
-
-func main() {
-	logger := log.New(os.Stderr)
-	logger.Info("server started")
-	logger.Infof("listening on %s", ":8080")
-	logger.InfoS("request completed", "method", "GET", "status", 200)
-}
+logger.Info("服务已启动")
+logger.Infof("监听端口 %d", 8080)
+logger.InfoS("请求完成", "method", "GET", "status", 200)
 ```
 
-```text
-INFO msg="server started"
-INFO msg="listening on :8080"
-INFO msg="request completed" method=GET status=200
-```
+默认输出 Text 格式。Debug、Info、Warn、Error、Fatal 均提供上述三种日志方法；Fatal 记录日志后退出进程。
 
-`Info` 输出文本，`Infof` 格式化文本，`InfoS` 输出消息和字段。
-Debug、Warn、Error、Fatal 也提供这三种方法。Fatal 写入日志后以状态码 1 退出。
-
-## JSON 与日志级别
+### 格式、级别与公共字段
 
 ```go
-logger := log.New(os.Stderr, log.Json(&log.HandlerOptions{Name: "server"}))
-logger.SetLevel(log.LevelInfo)
-logger.InfoS("ready", "port", 8080)
+logger := log.New(os.Stderr, log.Json()).
+    SetLevel(log.LevelInfo).
+    With("service", "api").
+    WithFields(log.DefaultFields...)
+
+logger.InfoS("请求完成", log.String("path", "/users"), log.Int("status", 200))
 ```
 
-```json
-{"logger":"server","level":"INFO","msg":"ready","port":8080}
-```
+新建 Logger 默认不带时间戳和调用位置，可通过 `DefaultFields` 一并添加。
+`With` 通过键值对添加公共字段，`WithFields` 接收 `log.Field`，`WithGroup` 用于字段分组。
+`log.Err(err)` 添加错误信息，err 为 nil 时不输出该字段。
 
-默认使用 Text。`SetLevel` 设置最低输出级别。
+### Printer
 
-## 字段
-
-`With` 添加公共字段，日志调用添加本次字段。可以使用键值对或类型化字段：
+Printer 将日志配置与打印分开：创建方统一配置字段和输出，调用方只记录日志内容，不能添加或覆盖预设字段、修改配置或关闭资源。
 
 ```go
-logger := log.New(os.Stderr).With("service", "api")
-logger.InfoS("user login", log.String("user", "alice"), log.Int("attempt", 1))
-logger.ErrorS("request failed", log.Err(err), "path", "/api")
+logger := log.New(os.Stderr, log.Json()).With("service", "api")
+printer := log.NewPrinter(logger)
+printer.Info("服务已启动")
+printer.Infof("监听端口 %d", 8080)
 ```
 
-`log.Err(nil)` 不输出字段。`WithFields` 接受 `[]log.Field`，
-`log.Fields(...)` 将键值对转换为字段。也支持 `slog.Attr` 和 `WithGroup`。
-重复 key 会保留；没有配对 value 的参数使用 `<BAD_KEY>`。
+上例的日志始终带有 `service=api`。Printer 支持 Debug、Info、Warn、Error 及格式化方法，也可作为 `io.Writer` 使用。
 
-### 时间戳与 Caller
-
-新建 Logger 不默认添加时间戳和调用位置，需要时使用 `DefaultFields`：
+### 全局日志
 
 ```go
-logger := log.New(os.Stderr).WithFields(log.DefaultFields...)
+log.SetDefault(logger)
+log.Info("服务已启动")
+log.InfoS("请求完成", "status", 200)
 ```
 
-也可以单独添加：
+全局日志默认写入 stderr，并带有时间戳和调用位置。
 
-```go
-logger := log.New(os.Stderr).With(
-    "ts", log.DefaultTimestamp,
-    "caller", log.DefaultCaller,
-)
-```
-
-不要修改 `DefaultFields`。封装日志调用时，每层包装用 `AddCallerDepth` 补偿一层：
-
-```go
-func Info(ctx context.Context, logger *log.Logger, msg string) error {
-    return logger.Log(log.AddCallerDepth(ctx, 1), log.LevelInfo, msg)
-}
-```
-
-`Caller(depth)` 的深度从 Valuer 求值位置计算，通常直接使用 `DefaultCaller` 即可。
-
-### Valuer 与 Context
-
-`Valuer` 在写日志时求值，适合从 ctx 获取请求字段：
+### 动态字段与 Context
 
 ```go
 type traceKey struct{}
@@ -106,58 +82,43 @@ logger := log.New(os.Stderr).WithFields(
     }),
 )
 ctx := context.WithValue(context.Background(), traceKey{}, "abc123")
-_ = logger.Log(ctx, log.LevelInfo, "request completed")
+_ = logger.Log(ctx, log.LevelInfo, "请求完成")
 ```
 
-`Log(ctx, ...)` 使用传入的 ctx，并累加调用 ctx 和 logger context 的 caller depth。
-其他日志方法使用 `WithContext(ctx)` 设置的 context。ctx 键值由应用显式选择输出。
+上例通过 `Log(ctx, ...)` 传入 Context，记录日志时才获取 trace ID。
+其他日志方法使用 `WithContext(ctx)` 设置的 Context。
+如果自行封装日志方法，可通过 `log.AddCallerDepth(ctx, 1)` 补偿包装层数，使调用位置指向业务代码。
 
-## Printer 与全局日志
-
-业务只需要文本日志时，可以传入 `log.Printer`：
-
-```go
-printer := log.NewPrinter(logger)
-printer.Info("server started")
-printer.Infof("listening on %s", ":8080")
-_, _ = printer.Write([]byte("message"))
-```
-
-Printer 提供 Debug、Info、Warn、Error 的文本和格式化方法，以及 `io.Writer`。
-需要结构化字段时使用 Logger。
-
-包级函数使用全局 Logger，默认输出到 stderr，带时间戳和 Caller：
-
-```go
-log.Info("server started")
-log.SetDefault(log.New(os.Stderr, log.Json()).WithFields(log.DefaultFields...))
-log.InfoS("ready", "port", 8080)
-```
-
-## 接入 log/slog
+### 接入 log/slog
 
 ```go
 native := log.New(os.Stderr, log.Json()).WithFields(log.DefaultFields...)
 logger := slog.New(log.NewSlogHandler(native))
-logger.Info("ready", "port", 8080)
+logger.Info("请求完成", "status", 200)
 ```
 
-`NewSlogHandler` 使用创建时的 Logger 配置，后续修改 Logger 不会同步。
-时间戳和 Caller 仍通过动态字段配置，不使用 `slog.Record.Time` 或 `PC`。
-字段转换、重命名和删除可通过 `HandlerOptions.Replacer` 配置。
+Handler 沿用创建时的 Logger 配置，后续修改 Logger 不会同步到 Handler。
+时间戳和调用位置仍通过本库的字段配置，字段处理可使用 `log.HandlerOptions.Replacer`。
 
-## 日志管理
+直接使用 Logger 时，应先完成配置，再交给多个 goroutine 使用。
+需要统一管理多个组件的日志时，可使用 [logmgr](./logmgr/README.zh-CN.md)。
 
-服务中有多个组件、文件输出或命令行配置时，使用 [logmgr](./logmgr/README.zh-CN.md)。
+## 基准测试
 
-Logger 的 `SetLevel`、`SetOutput`、`SetHandler` 应在并发使用前设置。
-运行时调整托管日志可使用 logmgr 的 `Apply`。
-
-## 性能测试
+在独立的 benchmarks 模块中运行：
 
 ```sh
 cd benchmarks
-go test -run '^$' -bench=. -benchmem
+go test -run '^$' -bench=. -benchmem -count=5
 ```
 
-测试场景和结果见 [benchmarks](./benchmarks/README.md)。
+与 slog、zap、zerolog、phuslu/log、logrus 对比：
+
+```sh
+go test -run '^$' -bench='^BenchmarkComparison(EncodeOnly|WritePath)$' -benchmem -count=5
+```
+
+测试涵盖 Text / JSON 编码、不同字段的开销、日志被级别过滤时的开销，以及单 goroutine 和多 goroutine 下的表现。
+EncodeOnly 主要测量编码开销，WritePath 还包含调用 writer 和输出同步的开销，两者均不测量实际磁盘读写性能。
+
+测试环境、完整结果与更多命令见 [benchmarks](./benchmarks/README.md)。
