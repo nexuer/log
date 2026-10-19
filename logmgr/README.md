@@ -50,7 +50,7 @@ func main() {
     logmgr.Init("server", logmgr.WithFields(log.DefaultFields...))
     defer logmgr.Close()
 
-    http := logmgr.Get().Logger("http")
+    http := logmgr.Logger("http")
     http.Info("listening on :8080")
 
     db := logmgr.Register("db",
@@ -72,6 +72,7 @@ A scope shares configuration among its loggers. New scopes inherit `Init` option
 | API | Purpose |
 |---|---|
 | `Get()` / `Get(name)` | Get the default or a named scope; panic if missing |
+| `Logger(name...)` | Get or create a logger in the default scope |
 | `Register(name, opts...)` | Create a scope |
 | `Lookup(name)` | Get a scope and whether it exists |
 | `Scopes()` | List scopes sorted by name |
@@ -81,8 +82,8 @@ A scope shares configuration among its loggers. New scopes inherit `Init` option
 Logger names are relative to the scope:
 
 ```go
-logmgr.Get().Logger()              // server
-logmgr.Get().Logger("http")        // server.http
+logmgr.Logger()                    // server
+logmgr.Logger("http")              // server.http
 logmgr.Get("db").Logger("mysql")   // db.mysql
 ```
 

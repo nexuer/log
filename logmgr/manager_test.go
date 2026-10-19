@@ -36,7 +36,10 @@ func TestSingletonManagerAPI(t *testing.T) {
 		t.Fatalf("default scope name = %q, want %q", got, "server")
 	}
 
-	worker := Get().Logger("worker")
+	if Logger() != Get().Logger() || Logger("") != Logger() {
+		t.Fatal("Logger did not return the default logger")
+	}
+	worker := Logger("worker")
 	if got := Get().Logger("worker"); got != worker {
 		t.Fatal("Printer did not return the existing default-scope printer")
 	}

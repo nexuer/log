@@ -5,6 +5,8 @@ import (
 	"flag"
 	"sync"
 	"sync/atomic"
+
+	"github.com/nexuer/log"
 )
 
 var defaultManager atomic.Pointer[manager]
@@ -56,6 +58,11 @@ func Register(name string, opts ...Option) *Scope {
 		panic(err)
 	}
 	return scope
+}
+
+// Logger returns a logger from the default scope.
+func Logger(name ...string) log.Printer {
+	return Get().Logger(name...)
 }
 
 // Lookup returns a scope and whether it exists.

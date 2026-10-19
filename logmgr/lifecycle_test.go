@@ -114,7 +114,7 @@ func TestPrinterMethodsAndHeldConfiguration(t *testing.T) {
 	Init("server", WithOutput(FileOutput), WithFileDir(dir), WithFormat(JsonFormat), WithLevel(log.LevelError))
 	t.Cleanup(func() { _ = Close() })
 	s := Get()
-	p := s.Logger("http")
+	p := Logger("http")
 	p.Debug("filtered")
 	s.Apply(WithLevel(log.LevelDebug), WithKeyValues("service", "api"), AppendKeyValues("component", "http"))
 	p.Debug("debug")

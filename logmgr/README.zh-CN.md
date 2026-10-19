@@ -45,7 +45,7 @@ func main() {
     logmgr.Init("server", logmgr.WithFields(log.DefaultFields...))
     defer logmgr.Close()
 
-    http := logmgr.Get().Logger("http")
+    http := logmgr.Logger("http")
     http.Info("listening on :8080")
 
     db := logmgr.Register("db",
@@ -67,6 +67,7 @@ func main() {
 | API | 用途 |
 |---|---|
 | `Get()` / `Get(name)` | 获取默认或指定 scope，不存在时 panic |
+| `Logger(name...)` | 获取或创建默认 scope 下的 logger |
 | `Register(name, opts...)` | 注册 scope |
 | `Lookup(name)` | 获取 scope 及是否存在 |
 | `Scopes()` | 返回按名称排序的 scope 列表 |
@@ -76,8 +77,8 @@ func main() {
 Logger 名称相对于 scope：
 
 ```go
-logmgr.Get().Logger()              // server
-logmgr.Get().Logger("http")        // server.http
+logmgr.Logger()                    // server
+logmgr.Logger("http")              // server.http
 logmgr.Get("db").Logger("mysql")   // db.mysql
 ```
 
